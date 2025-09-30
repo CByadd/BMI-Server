@@ -25,7 +25,7 @@ model BMI {
   id        String   @id @db.Uuid
   screenId  String
   screen    Screen   @relation(fields: [screenId], references: [id], onDelete: Cascade)
-  userId    String?
+  userId    String?  @db.Uuid
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   heightCm  Float
   weightKg  Float
