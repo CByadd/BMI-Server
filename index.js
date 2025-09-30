@@ -171,7 +171,7 @@ app.post('/api/bmi', async (req, res) => {
 		const clientBase = process.env.CLIENT_BASE_URL || 'https://bmi-client.onrender.com';
 		// Provide API base in URL hash so SPA can call backend even when hosted elsewhere
 		const inferredProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0] || req.protocol;
-		const apiBase = process.env.API_PUBLIC_BASE || `${inferredProto}://${req.get('host')}`;
+		const apiBase = process.env.API_PUBLIC_BASE || 'https://bmi-server-eight.vercel.app';
 		// Use dynamic app version or default to 'f1' if not provided
 		const version = appVersion || 'f1';
 		const webUrl = `${clientBase}?screenId=${encodeURIComponent(String(screenId))}&bmiId=${encodeURIComponent(bmiId)}&appVersion=${encodeURIComponent(version)}#server=${encodeURIComponent(apiBase)}`;
