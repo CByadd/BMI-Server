@@ -17,7 +17,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://bmi-client.vercel.app'],
+    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://bmi-client.vercel.app','http://127.0.0.1:5500'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
@@ -190,7 +190,7 @@ app.post('/api/bmi', async (req, res) => {
 		const clientBase = process.env.CLIENT_BASE_URL || 'https://bmi-client.onrender.com';
 		// Provide API base in URL hash so SPA can call backend even when hosted elsewhere
 		const inferredProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0] || req.protocol;
-		const apiBase = process.env.API_PUBLIC_BASE || 'https://bmi-server-eight.vercel.app';
+		const apiBase = process.env.API_PUBLIC_BASE || `${inferredProto}://${req.get('host')}`;
 		// Use dynamic app version or default to 'f1' if not provided
 		const version = appVersion || 'f1';
 		const webUrl = `${clientBase}?screenId=${encodeURIComponent(String(screenId))}&bmiId=${encodeURIComponent(bmiId)}&appVersion=${encodeURIComponent(version)}#server=${encodeURIComponent(apiBase)}`;
@@ -254,7 +254,7 @@ app.post('/api/payment-success', async (req, res) => {
             include: { user: true, screen: true }
         });
         
-        // Emit payment success to Android screen (only for non-F2 versions)
+       // Emit payment success to Android screen (only for non-F2 versions)
         if (appVersion !== 'f2') {
             io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', {
                 bmiId: updatedBMI.id,
@@ -271,6 +271,8 @@ app.post('/api/payment-success', async (req, res) => {
         } else {
             console.log('[PAYMENT] F2 version - skipping socket emission to Android');
         }
+        
+        console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId);
         
         return res.json({ ok: true, message: 'Payment processed successfully' });
     } catch (e) {
