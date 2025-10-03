@@ -17,7 +17,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://bmi-client.vercel.app','http://127.0.0.1:5500'],
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000', 'https://bmi-client.vercel.app', 'https://bmi-client.onrender.com', 'http://127.0.0.1:5500'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
@@ -132,6 +132,168 @@ io.on('connection', (socket) => {
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// POST /api/adscape/register -> Register Adscape player
+app.post('/api/adscape/register', async (req, res) => {
+    try {
+        const { 
+            screenId, 
+            appVersion, 
+            flowType, 
+            deviceName, 
+            screenWidth, 
+            screenHeight, 
+            ipAddress, 
+            location, 
+            osVersion, 
+            appVersionCode 
+        } = req.body || {};
+        
+        if (!screenId || !appVersion) {
+            return res.status(400).json({ error: 'screenId and appVersion required' });
+        }
+        
+        // Upsert Adscape player registration
+        const player = await prisma.adscapePlayer.upsert({
+            where: { screenId: String(screenId) },
+            update: {
+                appVersion: String(appVersion),
+                // Only update flowType if provided, otherwise keep existing value
+                ...(flowType !== undefined && flowType !== null ? { flowType: String(flowType) } : {}),
+                deviceName: deviceName ? String(deviceName) : null,
+                screenWidth: screenWidth ? Number(screenWidth) : null,
+                screenHeight: screenHeight ? Number(screenHeight) : null,
+                ipAddress: ipAddress ? String(ipAddress) : null,
+                location: location ? String(location) : null,
+                osVersion: osVersion ? String(osVersion) : null,
+                appVersionCode: appVersionCode ? String(appVersionCode) : null,
+                lastSeen: new Date(),
+                isActive: true,
+                updatedAt: new Date()
+            },
+            create: {
+                screenId: String(screenId),
+                appVersion: String(appVersion),
+                flowType: flowType ? String(flowType) : null,
+                deviceName: deviceName ? String(deviceName) : null,
+                screenWidth: screenWidth ? Number(screenWidth) : null,
+                screenHeight: screenHeight ? Number(screenHeight) : null,
+                ipAddress: ipAddress ? String(ipAddress) : null,
+                location: location ? String(location) : null,
+                osVersion: osVersion ? String(osVersion) : null,
+                appVersionCode: appVersionCode ? String(appVersionCode) : null,
+                lastSeen: new Date(),
+                isActive: true
+            }
+        });
+        
+        console.log('[ADSCAPE] Player registered:', { screenId, appVersion, flowType });
+        
+        return res.json({ 
+            ok: true, 
+            player: {
+                id: player.id,
+                screenId: player.screenId,
+                appVersion: player.appVersion,
+                flowType: player.flowType,
+                isActive: player.isActive
+            }
+        });
+    } catch (e) {
+        console.error('[ADSCAPE] Registration error:', e);
+        return res.status(500).json({ error: 'internal_error' });
+    }
+});
+
+// GET /api/adscape/player/:screenId -> Get player flow type
+app.get('/api/adscape/player/:screenId', async (req, res) => {
+    try {
+        const { screenId } = req.params;
+        
+        const player = await prisma.adscapePlayer.findUnique({
+            where: { screenId: String(screenId) }
+        });
+        
+        if (!player) {
+            return res.status(404).json({ error: 'Player not found' });
+        }
+        
+        return res.json({
+            ok: true,
+            player: {
+                screenId: player.screenId,
+                appVersion: player.appVersion,
+                flowType: player.flowType,
+                isActive: player.isActive
+            }
+        });
+    } catch (e) {
+        console.error('[ADSCAPE] Get player error:', e);
+        return res.status(500).json({ error: 'internal_error' });
+    }
+});
+
+// GET /api/adscape/players -> Get all players
+app.get('/api/adscape/players', async (req, res) => {
+    try {
+        console.log('[ADSCAPE] Getting all players');
+        
+        const players = await prisma.adscapePlayer.findMany({
+            orderBy: { lastSeen: 'desc' }
+        });
+        
+        res.json({ 
+            success: true, 
+            players 
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Get players error:', error);
+        res.status(500).json({ error: 'Failed to get players' });
+    }
+});
+
+// PUT /api/adscape/player/:screenId/flow-type -> Update player flow type
+app.put('/api/adscape/player/:screenId/flow-type', async (req, res) => {
+    try {
+        const { screenId } = req.params;
+        const { flowType } = req.body;
+        
+        console.log('[ADSCAPE] Updating flow type for player:', screenId, 'to:', flowType);
+        
+        const player = await prisma.adscapePlayer.update({
+            where: { screenId },
+            data: { flowType }
+        });
+        
+        res.json({ 
+            success: true, 
+            player 
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Update flow type error:', error);
+        res.status(500).json({ error: 'Failed to update flow type' });
+    }
+});
+
+// DELETE /api/adscape/player/:screenId -> Delete player
+app.delete('/api/adscape/player/:screenId', async (req, res) => {
+    try {
+        const { screenId } = req.params;
+        console.log('[ADSCAPE] Deleting player:', screenId);
+        
+        await prisma.adscapePlayer.delete({
+            where: { screenId }
+        });
+        
+        res.json({ 
+            success: true, 
+            message: 'Player deleted successfully' 
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Delete player error:', error);
+        res.status(500).json({ error: 'Failed to delete player' });
+    }
+});
+
 // Compute BMI helper
 function computeBMI(heightCm, weightKg) {
 	const h = Number(heightCm);
@@ -147,6 +309,79 @@ function computeBMI(heightCm, weightKg) {
 	return { bmi, category };
 }
 
+// Calculate streak helper
+function calculateStreak(bmiRecords) {
+    if (!bmiRecords || bmiRecords.length === 0) return { currentStreak: 0, longestStreak: 0, isActive: false };
+    
+    // Sort records by date (newest first)
+    const sortedRecords = bmiRecords.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    let currentStreak = 0;
+    let longestStreak = 0;
+    let tempStreak = 0;
+    let isActive = false;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Group records by date (ignore time)
+    const recordsByDate = new Map();
+    sortedRecords.forEach(record => {
+        const dateKey = new Date(record.timestamp);
+        dateKey.setHours(0, 0, 0, 0);
+        const dateString = dateKey.toISOString().split('T')[0];
+        if (!recordsByDate.has(dateString)) {
+            recordsByDate.set(dateString, record);
+        }
+    });
+    
+    const uniqueDates = Array.from(recordsByDate.keys()).sort().reverse();
+    
+    if (uniqueDates.length === 0) return { currentStreak: 0, longestStreak: 0, isActive: false };
+    
+    // Check if most recent record is today or yesterday
+    const mostRecentDate = new Date(uniqueDates[0]);
+    const daysDiff = Math.floor((today - mostRecentDate) / (1000 * 60 * 60 * 24));
+    
+    if (daysDiff <= 1) {
+        isActive = true;
+        currentStreak = 1;
+        
+        // Calculate current streak
+        for (let i = 1; i < uniqueDates.length; i++) {
+            const currentDate = new Date(uniqueDates[i]);
+            const prevDate = new Date(uniqueDates[i - 1]);
+            const diff = Math.floor((prevDate - currentDate) / (1000 * 60 * 60 * 24));
+            
+            if (diff === 1) {
+                currentStreak++;
+            } else {
+                break;
+            }
+        }
+    }
+    
+    // Calculate longest streak
+    tempStreak = 1;
+    longestStreak = 1;
+    
+    for (let i = 1; i < uniqueDates.length; i++) {
+        const currentDate = new Date(uniqueDates[i]);
+        const prevDate = new Date(uniqueDates[i - 1]);
+        const diff = Math.floor((prevDate - currentDate) / (1000 * 60 * 60 * 24));
+        
+        if (diff === 1) {
+            tempStreak++;
+        } else {
+            longestStreak = Math.max(longestStreak, tempStreak);
+            tempStreak = 1;
+        }
+    }
+    longestStreak = Math.max(longestStreak, tempStreak);
+    
+    return { currentStreak, longestStreak, isActive };
+}
+
 // POST /api/bmi -> { heightCm, weightKg, screenId, appVersion }
 app.post('/api/bmi', async (req, res) => {
     try {
@@ -154,9 +389,28 @@ app.post('/api/bmi', async (req, res) => {
 		if (!heightCm || !weightKg || !screenId) {
 			return res.status(400).json({ error: 'heightCm, weightKg, screenId required' });
 		}
+		
+		// Get the registered player's flow type from database
+		let playerFlowType = null;
+		try {
+			const player = await prisma.adscapePlayer.findUnique({
+				where: { screenId: String(screenId) }
+			});
+			playerFlowType = player?.flowType;
+			console.log('[BMI] Player flow type from DB:', playerFlowType, 'for screenId:', screenId);
+		} catch (e) {
+			console.log('[BMI] Could not fetch player flow type:', e.message);
+		}
+		
 		const { bmi, category } = computeBMI(heightCm, weightKg);
 		const bmiId = uuidv4();
 		const timestamp = new Date().toISOString();
+		// Generate fortune cookie message for F2 flow, null for F1 (will be generated after payment)
+        // Use player's flow type from DB, fallback to appVersion from request
+        const effectiveFlowType = playerFlowType || appVersion;
+        const fortune = (effectiveFlowType === 'F2' || effectiveFlowType === 'f2') ? await generateFortuneMessage({ bmi, category }) : null;
+        console.log('[BMI] Effective flow type:', effectiveFlowType, 'fortune generated:', !!fortune);
+        
 		const payload = {
 			bmiId,
 			screenId: String(screenId),
@@ -164,7 +418,8 @@ app.post('/api/bmi', async (req, res) => {
 			weight: Number(weightKg),
 			bmi,
 			category,
-			timestamp
+			timestamp,
+			fortune
 		};
         bmiStore.set(bmiId, payload);
 
@@ -174,6 +429,7 @@ app.post('/api/bmi', async (req, res) => {
             create: { id: String(screenId) },
             update: {}
         });
+        
         await prisma.bMI.create({
             data: {
                 id: bmiId,
@@ -182,7 +438,11 @@ app.post('/api/bmi', async (req, res) => {
                 weightKg: Number(weightKg),
                 bmi: Number(bmi),
                 category,
-                timestamp: new Date(timestamp)
+                timestamp: new Date(timestamp),
+                deviceId: req.body.deviceId || null,
+                appVersion: appVersion || null,
+                location: req.body.location || null,
+                fortune: fortune
             }
         });
 
@@ -191,8 +451,8 @@ app.post('/api/bmi', async (req, res) => {
 		// Provide API base in URL hash so SPA can call backend even when hosted elsewhere
 		const inferredProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0] || req.protocol;
 		const apiBase = process.env.API_PUBLIC_BASE || `${inferredProto}://${req.get('host')}`;
-		// Use dynamic app version or default to 'f1' if not provided
-		const version = appVersion || 'f1';
+		// Use effective flow type for web URL (convert to lowercase for client compatibility)
+		const version = (effectiveFlowType || appVersion || 'f1').toLowerCase();
 		const webUrl = `${clientBase}?screenId=${encodeURIComponent(String(screenId))}&bmiId=${encodeURIComponent(bmiId)}&appVersion=${encodeURIComponent(version)}#server=${encodeURIComponent(apiBase)}`;
 
         // Emit to the Android player room so it can open a modal
@@ -254,6 +514,23 @@ app.post('/api/payment-success', async (req, res) => {
             include: { user: true, screen: true }
         });
         
+        // Generate fortune immediately for F1 flow
+        if (appVersion !== 'f2') {
+            console.log('[PAYMENT] F1 Flow: Generating fortune immediately');
+            const fortuneMessage = await generateFortuneMessage({
+                bmi: updatedBMI.bmi,
+                category: updatedBMI.category
+            });
+            
+            // Update BMI record with generated fortune
+            await prisma.bMI.update({
+                where: { id: bmiId },
+                data: { fortune: fortuneMessage }
+            });
+            
+            console.log('[PAYMENT] F1 Flow: Fortune generated and stored:', fortuneMessage);
+        }
+        
        // Emit payment success to Android screen (only for non-F2 versions)
         if (appVersion !== 'f2') {
             io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', {
@@ -309,7 +586,8 @@ app.post('/api/progress-start', async (req, res) => {
             category: bmiData.category,
             height: bmiData.heightCm,
             weight: bmiData.weightKg,
-            timestamp: bmiData.timestamp.toISOString()
+            timestamp: bmiData.timestamp.toISOString(),
+            progressComplete: true // Flag to indicate this is progress start data
         });
         
         console.log('[PROGRESS] Start emitted to screen:', bmiData.screenId);
@@ -345,11 +623,23 @@ app.post('/api/fortune-generate', async (req, res) => {
             return res.status(404).json({ error: 'BMI data not found' });
         }
         
-        // Generate fortune message
-        const fortuneMessage = await generateFortuneMessage({
-            bmi: bmiData.bmi,
-            category: bmiData.category
-        });
+        // Use existing fortune if available, otherwise generate new one
+        let fortuneMessage = bmiData.fortune;
+        if (!fortuneMessage) {
+            console.log('[FORTUNE] No existing fortune, generating new one');
+            fortuneMessage = await generateFortuneMessage({
+                bmi: bmiData.bmi,
+                category: bmiData.category
+            });
+            
+            // Update BMI record with generated fortune
+            await prisma.bMI.update({
+                where: { id: bmiId },
+                data: { fortune: fortuneMessage }
+            });
+        } else {
+            console.log('[FORTUNE] Using existing fortune from database');
+        }
         
         const fortuneData = {
             bmiId: bmiData.id,
@@ -377,6 +667,137 @@ app.post('/api/fortune-generate', async (req, res) => {
         return res.json({ ok: true, fortuneMessage, data: fortuneData });
     } catch (e) {
         console.error('[FORTUNE] POST /api/fortune-generate error', e);
+        return res.status(500).json({ error: 'internal_error' });
+    }
+});
+
+// GET /api/user/:userId/analytics -> return user analytics data
+app.get('/api/user/:userId/analytics', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        // Get all BMI records for user
+        const bmiRecords = await prisma.bMI.findMany({
+            where: { userId: userId },
+            orderBy: { timestamp: 'desc' },
+            include: {
+                screen: true
+            }
+        });
+        
+        if (bmiRecords.length === 0) {
+            return res.json({
+                totalRecords: 0,
+                recentBMI: null,
+                streak: { currentStreak: 0, longestStreak: 0, isActive: false },
+                trends: [],
+                categoryDistribution: {},
+                averageBMI: 0
+            });
+        }
+        
+        // Calculate streak
+        const streak = calculateStreak(bmiRecords);
+        
+        // Get recent BMI (most recent record)
+        const recentBMI = {
+            id: bmiRecords[0].id,
+            bmi: bmiRecords[0].bmi,
+            category: bmiRecords[0].category,
+            height: bmiRecords[0].heightCm,
+            weight: bmiRecords[0].weightKg,
+            timestamp: bmiRecords[0].timestamp.toISOString(),
+            screenId: bmiRecords[0].screenId,
+            deviceId: bmiRecords[0].deviceId,
+            location: bmiRecords[0].location,
+            fortune: bmiRecords[0].fortune
+        };
+        
+        // Calculate trends (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const recentRecords = bmiRecords.filter(record => 
+            new Date(record.timestamp) >= thirtyDaysAgo
+        );
+        
+        const trends = recentRecords.map(record => ({
+            date: record.timestamp.toISOString().split('T')[0],
+            bmi: record.bmi,
+            weight: record.weightKg,
+            category: record.category
+        })).reverse(); // Oldest first for chart
+        
+        // Category distribution
+        const categoryDistribution = {};
+        bmiRecords.forEach(record => {
+            categoryDistribution[record.category] = (categoryDistribution[record.category] || 0) + 1;
+        });
+        
+        // Average BMI
+        const averageBMI = Number((bmiRecords.reduce((sum, record) => sum + record.bmi, 0) / bmiRecords.length).toFixed(1));
+        
+        return res.json({
+            totalRecords: bmiRecords.length,
+            recentBMI,
+            streak,
+            trends,
+            categoryDistribution,
+            averageBMI,
+            firstRecord: bmiRecords[bmiRecords.length - 1].timestamp.toISOString(),
+            lastRecord: bmiRecords[0].timestamp.toISOString()
+        });
+    } catch (e) {
+        console.error('[ANALYTICS] GET /api/user/:userId/analytics error', e);
+        return res.status(500).json({ error: 'internal_error' });
+    }
+});
+
+// POST /api/bmi/:id/link-user -> link BMI record to user
+app.post('/api/bmi/:id/link-user', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { userId } = req.body;
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'userId required' });
+        }
+        
+        console.log(`[BMI-LINK] Linking BMI ${id} to user ${userId}`);
+        
+        // Update BMI record with user ID
+        const updatedBMI = await prisma.bMI.update({
+            where: { id },
+            data: { userId },
+            include: {
+                user: true,
+                screen: true
+            }
+        });
+        
+        console.log(`[BMI-LINK] Successfully linked BMI to user: ${updatedBMI.user?.name}`);
+        
+        return res.json({ 
+            ok: true, 
+            message: 'BMI record linked to user successfully',
+            bmi: {
+                bmiId: updatedBMI.id,
+                screenId: updatedBMI.screenId,
+                height: updatedBMI.heightCm,
+                weight: updatedBMI.weightKg,
+                bmi: updatedBMI.bmi,
+                category: updatedBMI.category,
+                timestamp: updatedBMI.timestamp.toISOString(),
+                userId: updatedBMI.userId,
+                user: updatedBMI.user ? {
+                    id: updatedBMI.user.id,
+                    name: updatedBMI.user.name,
+                    mobile: updatedBMI.user.mobile
+                } : null
+            }
+        });
+    } catch (e) {
+        console.error('[BMI-LINK] Error linking BMI to user:', e);
         return res.status(500).json({ error: 'internal_error' });
     }
 });
@@ -420,6 +841,7 @@ app.get('/api/bmi/:id', async (req, res) => {
             bmi: row.bmi,
             category: row.category,
             timestamp: row.timestamp.toISOString(),
+            fortune: row.fortune,
             userId: row.userId,
             user: row.user ? {
                 id: row.user.id,
