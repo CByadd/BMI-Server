@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+     "preinstall": "chmod +x ./node_modules/.bin/prisma",
     "build": "npx prisma generate",
     "start": "node index.js",
     "dev": "node index.js",
