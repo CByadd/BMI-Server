@@ -4,16 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-  "start": "node ./node_modules/.bin/prisma generate && node index.js",
+    "build": "npx prisma generate",
+    "start": "node index.js",
     "dev": "node index.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate deploy",
-    "postinstall": "prisma generate "
+    "postinstall": "prisma generate"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@prisma/client": "^5.20.0",
     "prisma": "^5.20.0",
@@ -22,5 +20,8 @@
     "express": "^4.19.2",
     "socket.io": "^4.7.5",
     "uuid": "^9.0.1"
-  }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }
