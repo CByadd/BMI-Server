@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy Node.js app to Azure Web App - BMI-server
+name: Build and deploy Node.js app to Azure Web App - bmi-server
 
 on:
   push:
@@ -51,15 +51,15 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_9C82D4E9233949899C0424071963BF16 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4C8176CB875B4B009DE90E66F3E3ACC6 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_6C120C2C5D594B2FB72B30BCC1D92C91 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_1D14FABDDD874BFDBC356ACD809EE10E }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_29C8D6521C9C4C6FBF0578456341E1DE }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_193231FCDA1F454BBACDE44F46099C5A }}
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'BMI-server'
+          app-name: 'bmi-server'
           slot-name: 'Production'
           package: .
           
