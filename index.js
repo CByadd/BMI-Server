@@ -13,7 +13,7 @@ const io = new Server(server, {
 	}
 });
 // Prisma
-const { PrismaClient } = require('@prisma/client');
+// const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 app.use(cors({
