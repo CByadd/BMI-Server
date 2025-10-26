@@ -3,16 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "scripts": {
-     "preinstall": "chmod +x ./node_modules/.bin/prisma  ",
-    "build": "npx prisma generate",
-    "start": "node index.js",
-    "dev": "node index.js",
-    "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push",
-    "prisma:migrate": "prisma migrate deploy",
-    "postinstall": "prisma generate"
-  },
+ "scripts": {
+  "start": "node index.js",
+  "dev": "node index.js",
+  "prisma:generate": "prisma generate",
+  "prisma:push": "prisma db push",
+  "prisma:migrate": "prisma migrate deploy"
+},
+
   "dependencies": {
     "@prisma/client": "^5.20.0",
     "prisma": "^5.20.0",
