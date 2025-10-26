@@ -4,13 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "npx prisma generate",
     "start": "node index.js",
-    "dev": "node index.js",
-    "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push",
-    "prisma:migrate": "prisma migrate deploy",
-    "postinstall": "prisma generate"
+  "build": "npx prisma generate",
+  "postinstall": "npx prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
