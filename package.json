@@ -3,25 +3,24 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
- "scripts": {
-  "start": "chmod +x ./node_modules/.bin/prisma && npx prisma generate && node index.js",
-  "dev": "node index.js",
-  "prisma:generate": "prisma generate",
-  "prisma:push": "prisma db push",
-  "prisma:migrate": "prisma migrate deploy",
-  "postinstall": "prisma generate"
-},
-
+  "scripts": {
+    "start": "npx prisma generate && node index.js",
+    "dev": "node index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:migrate": "prisma migrate deploy",
+    "postinstall": "prisma generate"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^5.20.0",
+    "prisma": "^5.20.0",
     "axios": "^1.12.2",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "socket.io": "^4.7.5",
-    "uuid": "^9.0.1",
-    "prisma": "^5.20.0"
+    "uuid": "^9.0.1"
   }
 }
