@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "npm run prisma:generate && node index.js",
-  "build": "npx prisma generate",
+    "start": "node index.js",
+  
   "postinstall": "npx prisma generate"
   },
   "dependencies": {
