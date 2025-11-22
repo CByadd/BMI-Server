@@ -10,12 +10,20 @@ module.exports = (io) => {
     // Get a specific player by screenId
     router.get('/adscape/player/:screenId', screenController.getPlayer);
 
+    // Get player by registration code (8-digit)
+    router.get('/adscape/player-by-code/:code', screenController.getPlayerByCode);
+
     // Get all players
     router.get('/adscape/players', screenController.getAllPlayers);
 
     // Update player flow type (with real-time notification)
     router.put('/adscape/player/:screenId/flow-type', (req, res) => 
         screenController.updateFlowType(req, res, io)
+    );
+
+    // Update screen configuration (name, address, location, flowType, isEnabled)
+    router.put('/adscape/player/:screenId/config', (req, res) => 
+        screenController.updateScreenConfig(req, res, io)
     );
 
     // Delete a player
