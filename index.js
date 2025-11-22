@@ -13,6 +13,7 @@ const io = new Server(server, {
 			'http://localhost:5173',
 			'http://localhost:5174',
 			'http://localhost:3000',
+			'http://localhost:8080',
 			'https://bmi-client.vercel.app',
 			'https://bmi-client.onrender.com',
 			'https://adscape.co.in',
@@ -35,6 +36,7 @@ app.use(cors({
         'http://localhost:5173',
         'http://localhost:5174',
         'http://localhost:3000',
+        'http://localhost:8080',
         'https://bmi-client.vercel.app',
         'https://bmi-client.onrender.com',
         'https://adscape.co.in',
@@ -48,10 +50,27 @@ app.use(cors({
 }));
 
 // Manual CORS headers as fallback
+const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:3000',
+    'http://localhost:8080',
+    'https://bmi-client.vercel.app',
+    'https://bmi-client.onrender.com',
+    'https://adscape.co.in',
+    'https://admin.adscape.co.in',
+    'https://billboard-admin-x.vercel.app',
+    'http://127.0.0.1:5500'
+];
+
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning');
+    res.header('Access-Control-Allow-Credentials', 'true');
     
     if (req.method === 'OPTIONS') {
         res.sendStatus(200);
@@ -281,11 +300,12 @@ app.use('/api', bmiFlowRoutes(io));
 
 // Mount Admin Panel Routes
 app.use('/api', adminRoutes);
-app.use('/api', screenRoutes);
+app.use('/api', screenRoutes(io)); // Pass io for real-time updates
 app.use('/api/billboards', billboardRoutes);
 app.use('/api', campaignRoutes);
 app.use('/api', slotRoutes);
 app.use('/api/registrations', registrationRoutes);
+app.use('/api/media', require('./routes/mediaRoutes'));
 
 
 const PORT = process.env.PORT || 4000;

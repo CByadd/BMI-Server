@@ -137,4 +137,119 @@ exports.getTopPerformers = async (req, res) => {
   }
 };
 
+// GET BMI statistics for admin dashboard
+exports.getBMIStats = async (req, res) => {
+  try {
+    // Get total BMI records
+    const totalBMIRecords = await prisma.bMI.count();
+    
+    // Get total unique users
+    const totalUsers = await prisma.user.count();
+    
+    // Get daily users (users who checked BMI today)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+    
+    const dailyUsers = await prisma.bMI.count({
+      where: {
+        timestamp: {
+          gte: today,
+          lte: todayEnd
+        }
+      }
+    });
+    
+    // Get total screens
+    const totalScreens = await prisma.adscapePlayer.count({
+      where: { isActive: true }
+    });
+    
+    // Get active screens (online - seen within last 5 minutes)
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const activeScreens = await prisma.adscapePlayer.count({
+      where: {
+        isActive: true,
+        lastSeen: {
+          gte: fiveMinutesAgo
+        }
+      }
+    });
+    
+    res.json({
+      totalUsers: totalBMIRecords,
+      totalUniqueUsers: totalUsers,
+      dailyUsers,
+      totalScreens,
+      activeScreens
+    });
+  } catch (error) {
+    console.error('Error fetching BMI stats:', error);
+    res.status(500).json({ error: 'Failed to fetch BMI statistics' });
+  }
+};
+
+// GET user activity data for charts (last 7 days)
+exports.getUserActivity = async (req, res) => {
+  try {
+    const data = [];
+    const today = new Date();
+    
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      date.setHours(0, 0, 0, 0);
+      
+      const nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      const count = await prisma.bMI.count({
+        where: {
+          timestamp: {
+            gte: date,
+            lt: nextDate
+          }
+        }
+      });
+      
+      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      data.push({
+        name: dayNames[date.getDay()],
+        users: count
+      });
+    }
+    
+    res.json({ data });
+  } catch (error) {
+    console.error('Error fetching user activity:', error);
+    res.status(500).json({ error: 'Failed to fetch user activity' });
+  }
+};
+
+// GET weight classification distribution
+exports.getWeightClassification = async (req, res) => {
+  try {
+    const classifications = await prisma.$queryRaw`
+      SELECT category, COUNT(*)::int as count
+      FROM "BMI"
+      GROUP BY category
+    `;
+    
+    const total = classifications.reduce((sum, item) => sum + item.count, 0);
+    
+    const data = classifications.map(item => ({
+      name: item.category,
+      value: total > 0 ? Math.round((item.count / total) * 100) : 0,
+      count: item.count
+    }));
+    
+    res.json({ data });
+  } catch (error) {
+    console.error('Error fetching weight classification:', error);
+    res.status(500).json({ error: 'Failed to fetch weight classification' });
+  }
+};
+
+
 

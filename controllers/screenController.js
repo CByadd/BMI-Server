@@ -154,7 +154,7 @@ exports.getAllPlayers = async (req, res) => {
  * Update player flow type
  * PUT /api/adscape/player/:screenId/flow-type
  */
-exports.updateFlowType = async (req, res) => {
+exports.updateFlowType = async (req, res, io) => {
     try {
         const { screenId } = req.params;
         const { flowType } = req.body;
@@ -163,12 +163,24 @@ exports.updateFlowType = async (req, res) => {
             return res.status(400).json({ error: 'flowType required' });
         }
         
+        // Normalize flowType: "Normal" becomes null, otherwise keep as is
+        const normalizedFlowType = flowType === 'Normal' || flowType === 'normal' || flowType === '' ? null : String(flowType);
+        
         const player = await prisma.adscapePlayer.update({
             where: { screenId: String(screenId) },
-            data: { flowType: String(flowType) }
+            data: { flowType: normalizedFlowType }
         });
         
-        console.log('[ADSCAPE] Flow type updated:', { screenId, flowType });
+        console.log('[ADSCAPE] Flow type updated:', { screenId, flowType: normalizedFlowType });
+        
+        // Emit real-time update to Android app via WebSocket
+        if (io) {
+            io.to(`screen:${String(screenId)}`).emit('flow-type-changed', {
+                screenId: String(screenId),
+                flowType: normalizedFlowType
+            });
+            console.log('[ADSCAPE] Flow type change emitted to screen:', screenId);
+        }
         
         return res.json({
             ok: true,
@@ -203,5 +215,6 @@ exports.deletePlayer = async (req, res) => {
         return res.status(500).json({ error: 'Failed to delete player' });
     }
 };
+
 
 

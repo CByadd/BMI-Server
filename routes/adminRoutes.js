@@ -6,6 +6,12 @@ const adminController = require('../controllers/adminController');
 router.get('/admin-dashboard-stats', adminController.getDashboardStats);
 router.get('/admin-top-performers', adminController.getTopPerformers);
 
+// BMI Analytics routes
+router.get('/admin/bmi-stats', adminController.getBMIStats);
+router.get('/admin/user-activity', adminController.getUserActivity);
+router.get('/admin/weight-classification', adminController.getWeightClassification);
+
 module.exports = router;
+
 
 

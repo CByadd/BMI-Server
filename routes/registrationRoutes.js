@@ -54,3 +54,4 @@ router.get('/status/:email', registrationController.getRegistrationStatus);
 module.exports = router;
 
 
+
