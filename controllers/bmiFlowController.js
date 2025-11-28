@@ -394,7 +394,7 @@ exports.paymentSuccess = async (req, res, io) => {
         }
         
         // Update BMI record with user
-        const updatedBMI = await prisma.bMI.update({
+        let updatedBMI = await prisma.bMI.update({
             where: { id: bmiId },
             data: { userId: userId },
             include: { user: true, screen: true }
@@ -410,16 +410,13 @@ exports.paymentSuccess = async (req, res, io) => {
             });
             
             // Update BMI record with generated fortune
-            const updatedWithFortune = await prisma.bMI.update({
+            updatedBMI = await prisma.bMI.update({
                 where: { id: bmiId },
                 data: { fortune: fortuneMessage },
                 include: { user: true, screen: true }
             });
             
             console.log('[PAYMENT] F1 Flow: Fortune generated and stored:', fortuneMessage);
-            
-            // Use the updated record for emission
-            updatedBMI = updatedWithFortune;
         }
         
        // Emit payment success to Android screen (only for non-F2 versions)
@@ -444,6 +441,8 @@ exports.paymentSuccess = async (req, res, io) => {
             
             io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', paymentSuccessPayload);
             console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId, 'with fortune:', !!fortuneMessage);
+            console.log('[PAYMENT] Payment success payload keys:', Object.keys(paymentSuccessPayload));
+            console.log('[PAYMENT] Payment success payload:', JSON.stringify(paymentSuccessPayload, null, 2));
         } else {
             console.log('[PAYMENT] F2 version - skipping socket emission to Android');
         }
@@ -504,6 +503,58 @@ exports.progressStart = async (req, res, io) => {
         return res.json({ ok: true, message: 'Progress started' });
     } catch (e) {
         console.error('[PROGRESS] POST /api/progress-start error', e);
+        return res.status(500).json({ error: 'internal_error' });
+    }
+};
+
+/**
+ * POST /api/processing-start -> { bmiId, state } -> emit processing state to Android for sync
+ */
+exports.processingStart = async (req, res, io) => {
+    try {
+        const { bmiId, state } = req.body || {};
+        if (!bmiId) {
+            return res.status(400).json({ error: 'bmiId required' });
+        }
+        
+        // Get BMI data
+        const bmiData = await prisma.bMI.findUnique({
+            where: { id: bmiId },
+            include: { user: true, screen: true }
+        });
+        
+        if (!bmiData) {
+            return res.status(404).json({ error: 'BMI data not found' });
+        }
+        
+        // Emit processing state to Android screen for synchronization
+        if (io) {
+            const processingPayload = {
+                bmiId: bmiData.id,
+                screenId: bmiData.screenId,
+                userId: bmiData.userId,
+                user: bmiData.user,
+                bmi: bmiData.bmi,
+                category: bmiData.category,
+                height: bmiData.heightCm,
+                weight: bmiData.weightKg,
+                timestamp: bmiData.timestamp.toISOString(),
+                processingState: state || 'waiting' // 'waiting', 'bmi-result', 'progress', etc.
+            };
+            
+            // Include fortune if available
+            if (bmiData.fortune) {
+                processingPayload.fortune = bmiData.fortune;
+                processingPayload.fortuneMessage = bmiData.fortune;
+            }
+            
+            io.to(`screen:${bmiData.screenId}`).emit('processing-state', processingPayload);
+            console.log('[PROCESSING] State emitted to screen:', bmiData.screenId, 'state:', state);
+        }
+        
+        return res.json({ ok: true, message: 'Processing state emitted' });
+    } catch (e) {
+        console.error('[PROCESSING] POST /api/processing-start error', e);
         return res.status(500).json({ error: 'internal_error' });
     }
 };

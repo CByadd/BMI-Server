@@ -16,6 +16,9 @@ module.exports = (io) => {
     // POST /api/progress-start -> Emit progress start to both web and Android
     router.post('/progress-start', (req, res) => bmiFlowController.progressStart(req, res, io));
 
+    // POST /api/processing-start -> Emit processing state to Android for sync
+    router.post('/processing-start', (req, res) => bmiFlowController.processingStart(req, res, io));
+
     // POST /api/fortune-generate -> Generate fortune and emit to both web and Android
     router.post('/fortune-generate', (req, res) => bmiFlowController.fortuneGenerate(req, res, io));
 
