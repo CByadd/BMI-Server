@@ -4,6 +4,9 @@ const screenController = require('../controllers/screenController');
 
 // Export a function that accepts io for real-time updates
 module.exports = (io) => {
+    // Update player status (last seen, isActive) - legacy endpoint for Android app
+    router.post('/players/update-status', screenController.updatePlayerStatus);
+    
     // Register or update an Adscape player
     router.post('/adscape/register', screenController.registerPlayer);
 

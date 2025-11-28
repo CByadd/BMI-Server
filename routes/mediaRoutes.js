@@ -26,8 +26,8 @@ router.post('/upload', upload.array('files', 10), mediaController.uploadMedia);
 // Get all media files
 router.get('/', mediaController.getAllMedia);
 
-// Delete media file
-router.delete('/:id', mediaController.deleteMedia);
+// Delete media file - use delete endpoint with publicId in body
+router.delete('/delete', mediaController.deleteMedia);
 
 module.exports = router;
 

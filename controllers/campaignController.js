@@ -1,6 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../db');
 const { v4: uuidv4 } = require('uuid');
-const prisma = new PrismaClient();
 
 // Create campaign with file upload
 exports.createCampaign = async (req, res) => {

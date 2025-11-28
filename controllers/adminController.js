@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../db');
 
 // GET dashboard statistics
 exports.getDashboardStats = async (req, res) => {
@@ -248,6 +247,47 @@ exports.getWeightClassification = async (req, res) => {
   } catch (error) {
     console.error('Error fetching weight classification:', error);
     res.status(500).json({ error: 'Failed to fetch weight classification' });
+  }
+};
+
+// GET all users with BMI statistics
+exports.getAllUsers = async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      include: {
+        bmiData: {
+          orderBy: { timestamp: 'desc' },
+          take: 1, // Get latest BMI record
+        },
+        _count: {
+          select: { bmiData: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    const usersWithStats = users.map(user => {
+      const latestBMI = user.bmiData[0];
+      return {
+        id: user.id,
+        name: user.name,
+        mobile: user.mobile,
+        createdAt: user.createdAt,
+        totalBMIRecords: user._count.bmiData,
+        latestBMI: latestBMI ? {
+          bmi: latestBMI.bmi,
+          category: latestBMI.category,
+          weight: latestBMI.weightKg,
+          height: latestBMI.heightCm,
+          timestamp: latestBMI.timestamp
+        } : null
+      };
+    });
+    
+    res.json({ ok: true, users: usersWithStats });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 };
 

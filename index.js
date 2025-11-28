@@ -1,3 +1,6 @@
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -27,9 +30,8 @@ const io = new Server(server, {
 		credentials: true
 	}
 });
-// Prisma
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+// Prisma - use shared instance
+const prisma = require('./db');
 
 app.use(cors({
     origin: [
@@ -306,6 +308,9 @@ app.use('/api', campaignRoutes);
 app.use('/api', slotRoutes);
 app.use('/api/registrations', registrationRoutes);
 app.use('/api/media', require('./routes/mediaRoutes'));
+app.use('/api', require('./routes/playlistRoutes'));
+app.use('/api', require('./routes/scheduleRoutes'));
+app.use('/api', require('./routes/defaultAssetRoutes'));
 
 
 const PORT = process.env.PORT || 4000;
