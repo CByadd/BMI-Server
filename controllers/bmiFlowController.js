@@ -439,12 +439,13 @@ exports.paymentSuccess = async (req, res, io) => {
                 paymentSuccessPayload.fortuneMessage = fortuneMessage; // Include both keys for compatibility
             }
             
+            // Emit to screen room (both Android and Web clients)
             io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', paymentSuccessPayload);
-            console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId, 'with fortune:', !!fortuneMessage);
+            console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId, 'with fortune:', !!fortuneMessage, '(Android + Web)');
             console.log('[PAYMENT] Payment success payload keys:', Object.keys(paymentSuccessPayload));
             console.log('[PAYMENT] Payment success payload:', JSON.stringify(paymentSuccessPayload, null, 2));
         } else {
-            console.log('[PAYMENT] F2 version - skipping socket emission to Android');
+            console.log('[PAYMENT] F2 version - skipping socket emission');
         }
         
         return res.json({ ok: true, message: 'Payment processed successfully' });
@@ -527,7 +528,7 @@ exports.processingStart = async (req, res, io) => {
             return res.status(404).json({ error: 'BMI data not found' });
         }
         
-        // Emit processing state to Android screen for synchronization
+        // Emit processing state to both Android and Web clients for synchronization
         if (io) {
             const processingPayload = {
                 bmiId: bmiData.id,
@@ -548,8 +549,9 @@ exports.processingStart = async (req, res, io) => {
                 processingPayload.fortuneMessage = bmiData.fortune;
             }
             
+            // Emit to screen room (both Android and Web clients)
             io.to(`screen:${bmiData.screenId}`).emit('processing-state', processingPayload);
-            console.log('[PROCESSING] State emitted to screen:', bmiData.screenId, 'state:', state);
+            console.log('[PROCESSING] State emitted to screen:', bmiData.screenId, 'state:', state, '(Android + Web)');
         }
         
         return res.json({ ok: true, message: 'Processing state emitted' });
