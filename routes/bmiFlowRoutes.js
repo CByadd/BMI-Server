@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const bmiFlowController = require('../controllers/bmiFlowController');
+const sessionController = require('../controllers/sessionController');
 
 // Export a function that accepts io
 module.exports = (io) => {
@@ -16,9 +17,6 @@ module.exports = (io) => {
     // POST /api/progress-start -> Emit progress start to both web and Android
     router.post('/progress-start', (req, res) => bmiFlowController.progressStart(req, res, io));
 
-    // POST /api/processing-start -> Emit processing state to Android for sync
-    router.post('/processing-start', (req, res) => bmiFlowController.processingStart(req, res, io));
-
     // POST /api/fortune-generate -> Generate fortune and emit to both web and Android
     router.post('/fortune-generate', (req, res) => bmiFlowController.fortuneGenerate(req, res, io));
 
@@ -33,6 +31,16 @@ module.exports = (io) => {
 
     // GET /api/debug/connections -> Debug socket connections
     router.get('/debug/connections', (req, res) => bmiFlowController.debugConnections(req, res, io));
+    
+    // POST /api/token/claim -> Claim token when QR is scanned
+    router.post('/token/claim', (req, res) => bmiFlowController.claimToken(req, res));
+    
+    // GET /api/token/:token/status -> Get token status
+    router.get('/token/:token/status', (req, res) => bmiFlowController.getTokenStatus(req, res));
+
+    // Header-based secure session endpoints
+    router.post('/session/claim', sessionController.sessionClaim);
+    router.get('/session/status', sessionController.sessionStatus);
 
     return router;
 };

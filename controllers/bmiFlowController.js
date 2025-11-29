@@ -1,89 +1,11 @@
-const prisma = require('../db');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
-const crypto = require('crypto');
+const tokenManager = require('./tokenManager');
 
 // In-memory store for BMI data
 const bmiStore = new Map(); // bmiId -> payload
-
-// Token store for QR code URLs
-// Structure: token -> { bmiId, expiresAt, used, createdAt }
-const tokenStore = new Map();
-
-// Cleanup expired tokens every 5 minutes
-setInterval(() => {
-    const now = Date.now();
-    for (const [token, data] of tokenStore.entries()) {
-        if (data.expiresAt < now) {
-            tokenStore.delete(token);
-            console.log(`[TOKEN] Cleaned up expired token: ${token.substring(0, 8)}...`);
-        }
-    }
-}, 5 * 60 * 1000); // 5 minutes
-
-/**
- * Generate a secure token for QR code URL
- */
-function generateToken() {
-    return crypto.randomBytes(32).toString('hex');
-}
-
-/**
- * Create a token for a BMI record
- * Token expires in 20 minutes if not used
- */
-function createToken(bmiId) {
-    const token = generateToken();
-    const now = Date.now();
-    const expiresAt = now + (20 * 60 * 1000); // 20 minutes
-    
-    tokenStore.set(token, {
-        bmiId,
-        expiresAt,
-        used: false,
-        createdAt: now
-    });
-    
-    console.log(`[TOKEN] Created token for bmiId: ${bmiId}, expires at: ${new Date(expiresAt).toISOString()}`);
-    return token;
-}
-
-/**
- * Validate and consume a token
- * Returns { valid: boolean, bmiId: string | null, error: string | null }
- */
-function validateAndConsumeToken(token) {
-    if (!token) {
-        return { valid: false, bmiId: null, error: 'Token is required' };
-    }
-    
-    const tokenData = tokenStore.get(token);
-    
-    if (!tokenData) {
-        return { valid: false, bmiId: null, error: 'Invalid or expired token' };
-    }
-    
-    const now = Date.now();
-    
-    // Check if token has expired
-    if (tokenData.expiresAt < now) {
-        tokenStore.delete(token);
-        return { valid: false, bmiId: null, error: 'Token has expired' };
-    }
-    
-    // Check if token has already been used
-    if (tokenData.used) {
-        return { valid: false, bmiId: null, error: 'Token has already been used' };
-    }
-    
-    // Mark token as used (expire immediately after use)
-    tokenData.used = true;
-    tokenData.usedAt = now;
-    tokenStore.set(token, tokenData);
-    
-    console.log(`[TOKEN] Token validated and consumed for bmiId: ${tokenData.bmiId}`);
-    return { valid: true, bmiId: tokenData.bmiId, error: null };
-}
 
 /**
  * Generate fortune message using Grok API
@@ -301,36 +223,19 @@ exports.createBMI = async (req, res, io) => {
             }
         });
 
-		// Generate token for QR code URL (expires in 20 minutes, expires immediately after use)
-		const token = createToken(bmiId);
+		// Generate token for pairing
+		const token = tokenManager.generateToken(screenId, bmiId);
 		
 		// Build web client URL (adjust if you host client elsewhere)
-		let clientBase = process.env.CLIENT_BASE_URL || 'https://bmi-client.onrender.com';
-		// Remove trailing slashes from clientBase to ensure clean URL construction
-		clientBase = clientBase.replace(/\/+$/, '');
-		
+		const clientBase = process.env.CLIENT_BASE_URL || 'http://localhost:5173';
 		// Provide API base in URL hash so SPA can call backend even when hosted elsewhere
 		const inferredProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0] || req.protocol;
-		let apiBase = process.env.API_PUBLIC_BASE || `${inferredProto}://${req.get('host')}`;
-		// Remove trailing slashes from apiBase
-		apiBase = apiBase.replace(/\/+$/, '');
-		
+		const apiBase = process.env.API_PUBLIC_BASE || `${inferredProto}://${req.get('host')}`;
 		// Use effective flow type for web URL (convert to lowercase for client compatibility)
 		const version = (effectiveFlowType || appVersion || 'f1').toLowerCase();
-		
-		// Construct URL with proper encoding
-		// Query parameters: screenId, bmiId, appVersion, token
-		// Hash fragment: server (API base URL)
-		// Format: https://client.com?screenId=...&bmiId=...&appVersion=...&token=...#server=https://api.com
 		const webUrl = `${clientBase}?screenId=${encodeURIComponent(String(screenId))}&bmiId=${encodeURIComponent(bmiId)}&appVersion=${encodeURIComponent(version)}&token=${encodeURIComponent(token)}#server=${encodeURIComponent(apiBase)}`;
 		
-		console.log('[BMI] Generated webUrl:', webUrl);
-		console.log('[BMI] Client base:', clientBase);
-		console.log('[BMI] API base:', apiBase);
-		console.log('[BMI] ScreenId:', screenId);
-		console.log('[BMI] BMIId:', bmiId);
-		console.log('[BMI] Version:', version);
-		console.log('[BMI] Token:', token.substring(0, 8) + '...');
+		console.log('[BMI] Generated token for BMI:', { token, screenId, bmiId });
 
         // Emit to the Android player room so it can open a modal
         const emitPayload = {
@@ -338,10 +243,19 @@ exports.createBMI = async (req, res, io) => {
             webUrl
         };
         if (io) {
-            console.log('[BMI] Emitting to screen:', String(screenId));
-            console.log('[BMI] Emitted webUrl:', webUrl);
-            console.log('[BMI] Full emit payload:', JSON.stringify(emitPayload, null, 2));
-            io.to(`screen:${String(screenId)}`).emit('bmi-data-received', emitPayload);
+            const roomName = `screen:${String(screenId)}`;
+            const room = io.sockets.adapter.rooms.get(roomName);
+            const socketCount = room ? room.size : 0;
+            console.log('[BMI] [EMIT] Emitting bmi-data-received to room:', {
+                roomName: roomName,
+                screenId: String(screenId),
+                socketCount: socketCount,
+                payload: emitPayload
+            });
+            io.to(roomName).emit('bmi-data-received', emitPayload);
+            console.log('[BMI] [EMIT] ✅ bmi-data-received event emitted to room:', roomName);
+        } else {
+            console.log('[BMI] [EMIT] ⚠️ Socket.IO not available, cannot emit bmi-data-received');
         }
         console.log('[BMI] created and emitted', emitPayload);
 
@@ -388,32 +302,36 @@ exports.createUser = async (req, res) => {
  */
 exports.paymentSuccess = async (req, res, io) => {
     try {
-        const { userId, bmiId, appVersion } = req.body || {};
+        const { userId, bmiId, appVersion, token } = req.body || {};
         if (!userId || !bmiId) {
             return res.status(400).json({ error: 'userId, bmiId required' });
         }
         
+        // Update token state if provided
+        if (token) {
+            tokenManager.updateTokenState(token, 'payment_done');
+            console.log('[PAYMENT] Token state updated to payment_done:', token);
+        }
+        
         // Update BMI record with user
-        let updatedBMI = await prisma.bMI.update({
+        const updatedBMI = await prisma.bMI.update({
             where: { id: bmiId },
             data: { userId: userId },
             include: { user: true, screen: true }
         });
         
         // Generate fortune immediately for F1 flow
-        let fortuneMessage = null;
         if (appVersion !== 'f2') {
             console.log('[PAYMENT] F1 Flow: Generating fortune immediately');
-            fortuneMessage = await generateFortuneMessage({
+            const fortuneMessage = await generateFortuneMessage({
                 bmi: updatedBMI.bmi,
                 category: updatedBMI.category
             });
             
             // Update BMI record with generated fortune
-            updatedBMI = await prisma.bMI.update({
+            await prisma.bMI.update({
                 where: { id: bmiId },
-                data: { fortune: fortuneMessage },
-                include: { user: true, screen: true }
+                data: { fortune: fortuneMessage }
             });
             
             console.log('[PAYMENT] F1 Flow: Fortune generated and stored:', fortuneMessage);
@@ -421,10 +339,14 @@ exports.paymentSuccess = async (req, res, io) => {
         
        // Emit payment success to Android screen (only for non-F2 versions)
         if (appVersion !== 'f2' && io) {
-            const paymentSuccessPayload = {
+            const roomName = `screen:${updatedBMI.screenId}`;
+            const room = io.sockets.adapter.rooms.get(roomName);
+            const socketCount = room ? room.size : 0;
+            const paymentPayload = {
                 bmiId: updatedBMI.id,
                 screenId: updatedBMI.screenId,
                 userId: updatedBMI.userId,
+                token: token || null,
                 user: updatedBMI.user,
                 bmi: updatedBMI.bmi,
                 category: updatedBMI.category,
@@ -432,20 +354,17 @@ exports.paymentSuccess = async (req, res, io) => {
                 weight: updatedBMI.weightKg,
                 timestamp: updatedBMI.timestamp.toISOString()
             };
-            
-            // Include fortune if it was generated (for F1 flow)
-            if (fortuneMessage) {
-                paymentSuccessPayload.fortune = fortuneMessage;
-                paymentSuccessPayload.fortuneMessage = fortuneMessage; // Include both keys for compatibility
-            }
-            
-            // Emit to screen room (both Android and Web clients)
-            io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', paymentSuccessPayload);
-            console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId, 'with fortune:', !!fortuneMessage, '(Android + Web)');
-            console.log('[PAYMENT] Payment success payload keys:', Object.keys(paymentSuccessPayload));
-            console.log('[PAYMENT] Payment success payload:', JSON.stringify(paymentSuccessPayload, null, 2));
+            console.log('[PAYMENT] [EMIT] Emitting payment-success to room:', {
+                roomName: roomName,
+                screenId: updatedBMI.screenId,
+                socketCount: socketCount,
+                payload: paymentPayload
+            });
+            io.to(roomName).emit('payment-success', paymentPayload);
+            console.log('[PAYMENT] [EMIT] ✅ payment-success event emitted to room:', roomName);
+            console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId);
         } else {
-            console.log('[PAYMENT] F2 version - skipping socket emission');
+            console.log('[PAYMENT] F2 version - skipping socket emission to Android');
         }
         
         return res.json({ ok: true, message: 'Payment processed successfully' });
@@ -477,7 +396,10 @@ exports.progressStart = async (req, res, io) => {
         
         // Emit progress start to Android screen
         if (io) {
-            const progressStartPayload = {
+            const roomName = `screen:${bmiData.screenId}`;
+            const room = io.sockets.adapter.rooms.get(roomName);
+            const socketCount = room ? room.size : 0;
+            const progressPayload = {
                 bmiId: bmiData.id,
                 screenId: bmiData.screenId,
                 userId: bmiData.userId,
@@ -489,14 +411,16 @@ exports.progressStart = async (req, res, io) => {
                 timestamp: bmiData.timestamp.toISOString(),
                 progressComplete: true // Flag to indicate this is progress start data
             };
-            
-            // Include fortune if available (should be generated during payment-success for F1)
-            if (bmiData.fortune) {
-                progressStartPayload.fortune = bmiData.fortune;
-                progressStartPayload.fortuneMessage = bmiData.fortune; // Include both keys for compatibility
-            }
-            
-            io.to(`screen:${bmiData.screenId}`).emit('progress-start', progressStartPayload);
+            console.log('[PROGRESS] [EMIT] Emitting progress-start to room:', {
+                roomName: roomName,
+                screenId: bmiData.screenId,
+                socketCount: socketCount,
+                payload: progressPayload
+            });
+            io.to(roomName).emit('progress-start', progressPayload);
+            console.log('[PROGRESS] [EMIT] ✅ progress-start event emitted to room:', roomName);
+        } else {
+            console.log('[PROGRESS] [EMIT] ⚠️ Socket.IO not available, cannot emit progress-start');
         }
         
         console.log('[PROGRESS] Start emitted to screen:', bmiData.screenId);
@@ -504,59 +428,6 @@ exports.progressStart = async (req, res, io) => {
         return res.json({ ok: true, message: 'Progress started' });
     } catch (e) {
         console.error('[PROGRESS] POST /api/progress-start error', e);
-        return res.status(500).json({ error: 'internal_error' });
-    }
-};
-
-/**
- * POST /api/processing-start -> { bmiId, state } -> emit processing state to Android for sync
- */
-exports.processingStart = async (req, res, io) => {
-    try {
-        const { bmiId, state } = req.body || {};
-        if (!bmiId) {
-            return res.status(400).json({ error: 'bmiId required' });
-        }
-        
-        // Get BMI data
-        const bmiData = await prisma.bMI.findUnique({
-            where: { id: bmiId },
-            include: { user: true, screen: true }
-        });
-        
-        if (!bmiData) {
-            return res.status(404).json({ error: 'BMI data not found' });
-        }
-        
-        // Emit processing state to both Android and Web clients for synchronization
-        if (io) {
-            const processingPayload = {
-                bmiId: bmiData.id,
-                screenId: bmiData.screenId,
-                userId: bmiData.userId,
-                user: bmiData.user,
-                bmi: bmiData.bmi,
-                category: bmiData.category,
-                height: bmiData.heightCm,
-                weight: bmiData.weightKg,
-                timestamp: bmiData.timestamp.toISOString(),
-                processingState: state || 'waiting' // 'waiting', 'bmi-result', 'progress', etc.
-            };
-            
-            // Include fortune if available
-            if (bmiData.fortune) {
-                processingPayload.fortune = bmiData.fortune;
-                processingPayload.fortuneMessage = bmiData.fortune;
-            }
-            
-            // Emit to screen room (both Android and Web clients)
-            io.to(`screen:${bmiData.screenId}`).emit('processing-state', processingPayload);
-            console.log('[PROCESSING] State emitted to screen:', bmiData.screenId, 'state:', state, '(Android + Web)');
-        }
-        
-        return res.json({ ok: true, message: 'Processing state emitted' });
-    } catch (e) {
-        console.error('[PROCESSING] POST /api/processing-start error', e);
         return res.status(500).json({ error: 'internal_error' });
     }
 };
@@ -620,7 +491,17 @@ exports.fortuneGenerate = async (req, res, io) => {
         
         // Emit fortune to Android screen (only for non-F2 versions)
         if (appVersion !== 'f2' && io) {
-            io.to(`screen:${bmiData.screenId}`).emit('fortune-ready', fortuneData);
+            const roomName = `screen:${bmiData.screenId}`;
+            const room = io.sockets.adapter.rooms.get(roomName);
+            const socketCount = room ? room.size : 0;
+            console.log('[FORTUNE] [EMIT] Emitting fortune-ready to room:', {
+                roomName: roomName,
+                screenId: bmiData.screenId,
+                socketCount: socketCount,
+                payload: fortuneData
+            });
+            io.to(roomName).emit('fortune-ready', fortuneData);
+            console.log('[FORTUNE] [EMIT] ✅ fortune-ready event emitted to room:', roomName);
             console.log('[FORTUNE] Generated and emitted to screen:', bmiData.screenId);
         } else {
             console.log('[FORTUNE] F2 version - skipping socket emission to Android');
@@ -772,41 +653,10 @@ exports.linkUserToBMI = async (req, res) => {
 
 /**
  * GET /api/bmi/:id -> return stored payload
- * Requires token query parameter for security
  */
 exports.getBMI = async (req, res) => {
     const id = req.params.id;
-    const token = req.query.token;
-    
-    console.log(`[BMI] GET request for id: ${id}, token: ${token ? token.substring(0, 8) + '...' : 'missing'}`);
-    
-    // Validate token if provided (for QR code access)
-    if (token) {
-        const tokenValidation = validateAndConsumeToken(token);
-        if (!tokenValidation.valid) {
-            console.log(`[BMI] Token validation failed: ${tokenValidation.error}`);
-            return res.status(401).json({ 
-                error: 'token_invalid', 
-                message: tokenValidation.error || 'Invalid or expired token',
-                id: id
-            });
-        }
-        
-        // Verify token is for this BMI record
-        if (tokenValidation.bmiId !== id) {
-            console.log(`[BMI] Token bmiId mismatch: token for ${tokenValidation.bmiId}, requested ${id}`);
-            return res.status(403).json({ 
-                error: 'token_mismatch', 
-                message: 'Token does not match the requested BMI record',
-                id: id
-            });
-        }
-        
-        console.log(`[BMI] Token validated successfully for bmiId: ${id}`);
-    } else {
-        // For backward compatibility, allow access without token (but log it)
-        console.log(`[BMI] WARNING: Accessing BMI without token - this should only happen for direct API calls`);
-    }
+    console.log(`[BMI] GET request for id: ${id}`);
     
     try {
         // Try in-memory store first
@@ -884,5 +734,70 @@ exports.debugConnections = (req, res, io) => {
     }
 };
 
+/**
+ * POST /api/token/claim -> Claim token when client scans QR
+ */
+exports.claimToken = (req, res) => {
+    try {
+        const { token } = req.body || {};
+        if (!token) {
+            return res.status(400).json({ error: 'token required' });
+        }
+        
+        const clientId = req.headers['x-client-id'] || req.ip || 'unknown';
+        const result = tokenManager.claimToken(token, clientId);
+        
+        if (result.valid) {
+            console.log('[TOKEN] Token claimed successfully:', { token, clientId });
+            return res.json({ 
+                ok: true, 
+                token: result.tokenData,
+                expiresAt: result.tokenData.expiresAt
+            });
+        } else {
+            console.log('[TOKEN] Token claim failed:', { token, error: result.error });
+            return res.status(400).json({ error: result.error });
+        }
+    } catch (e) {
+        console.error('[TOKEN] Claim error:', e);
+        return res.status(500).json({ error: 'internal_error' });
+    }
+};
 
+/**
+ * GET /api/token/:token/status -> Get token status
+ */
+exports.getTokenStatus = (req, res) => {
+    try {
+        const { token } = req.params || {};
+        if (!token) {
+            return res.status(400).json({ error: 'token_required' });
+        }
+
+        const tokenData = tokenManager.getToken(token);
+        if (!tokenData) {
+            return res.status(404).json({ error: 'token_not_found' });
+        }
+
+        const now = Date.now();
+        const isExpired = now > tokenData.expiresAt;
+        const isUnusedTimeout = now > tokenData.unusedTimeout;
+
+        return res.json({
+            ok: true,
+            token: {
+                screenId: tokenData.screenId,
+                bmiId: tokenData.bmiId,
+                state: tokenData.state,
+                isExpired,
+                isUnusedTimeout,
+                expiresAt: tokenData.expiresAt,
+                lastActivity: tokenData.lastActivity
+            }
+        });
+    } catch (e) {
+        console.error('[TOKEN] GET /api/token/:token/status error', e);
+        return res.status(500).json({ error: 'internal_error' });
+    }
+};
 
