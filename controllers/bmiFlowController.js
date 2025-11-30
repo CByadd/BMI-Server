@@ -2,7 +2,6 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
-const tokenManager = require('./tokenManager');
 
 // In-memory store for BMI data
 const bmiStore = new Map(); // bmiId -> payload
@@ -223,9 +222,6 @@ exports.createBMI = async (req, res, io) => {
             }
         });
 
-		// Generate token for pairing
-		const token = tokenManager.generateToken(screenId, bmiId);
-		
 		// Build web client URL (adjust if you host client elsewhere)
 		const clientBase = process.env.CLIENT_BASE_URL || 'http://localhost:5173';
 		// Provide API base in URL hash so SPA can call backend even when hosted elsewhere
@@ -233,9 +229,7 @@ exports.createBMI = async (req, res, io) => {
 		const apiBase = process.env.API_PUBLIC_BASE || `${inferredProto}://${req.get('host')}`;
 		// Use effective flow type for web URL (convert to lowercase for client compatibility)
 		const version = (effectiveFlowType || appVersion || 'f1').toLowerCase();
-		const webUrl = `${clientBase}?screenId=${encodeURIComponent(String(screenId))}&bmiId=${encodeURIComponent(bmiId)}&appVersion=${encodeURIComponent(version)}&token=${encodeURIComponent(token)}#server=${encodeURIComponent(apiBase)}`;
-		
-		console.log('[BMI] Generated token for BMI:', { token, screenId, bmiId });
+		const webUrl = `${clientBase}?screenId=${encodeURIComponent(String(screenId))}&bmiId=${encodeURIComponent(bmiId)}&appVersion=${encodeURIComponent(version)}#server=${encodeURIComponent(apiBase)}`;
 
         // Emit to the Android player room so it can open a modal
         const emitPayload = {
@@ -243,19 +237,7 @@ exports.createBMI = async (req, res, io) => {
             webUrl
         };
         if (io) {
-            const roomName = `screen:${String(screenId)}`;
-            const room = io.sockets.adapter.rooms.get(roomName);
-            const socketCount = room ? room.size : 0;
-            console.log('[BMI] [EMIT] Emitting bmi-data-received to room:', {
-                roomName: roomName,
-                screenId: String(screenId),
-                socketCount: socketCount,
-                payload: emitPayload
-            });
-            io.to(roomName).emit('bmi-data-received', emitPayload);
-            console.log('[BMI] [EMIT] ✅ bmi-data-received event emitted to room:', roomName);
-        } else {
-            console.log('[BMI] [EMIT] ⚠️ Socket.IO not available, cannot emit bmi-data-received');
+            io.to(`screen:${String(screenId)}`).emit('bmi-data-received', emitPayload);
         }
         console.log('[BMI] created and emitted', emitPayload);
 
@@ -302,15 +284,9 @@ exports.createUser = async (req, res) => {
  */
 exports.paymentSuccess = async (req, res, io) => {
     try {
-        const { userId, bmiId, appVersion, token } = req.body || {};
+        const { userId, bmiId, appVersion } = req.body || {};
         if (!userId || !bmiId) {
             return res.status(400).json({ error: 'userId, bmiId required' });
-        }
-        
-        // Update token state if provided
-        if (token) {
-            tokenManager.updateTokenState(token, 'payment_done');
-            console.log('[PAYMENT] Token state updated to payment_done:', token);
         }
         
         // Update BMI record with user
@@ -339,29 +315,17 @@ exports.paymentSuccess = async (req, res, io) => {
         
        // Emit payment success to Android screen (only for non-F2 versions)
         if (appVersion !== 'f2' && io) {
-            const roomName = `screen:${updatedBMI.screenId}`;
-            const room = io.sockets.adapter.rooms.get(roomName);
-            const socketCount = room ? room.size : 0;
-            const paymentPayload = {
+            io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', {
                 bmiId: updatedBMI.id,
                 screenId: updatedBMI.screenId,
                 userId: updatedBMI.userId,
-                token: token || null,
                 user: updatedBMI.user,
                 bmi: updatedBMI.bmi,
                 category: updatedBMI.category,
                 height: updatedBMI.heightCm,
                 weight: updatedBMI.weightKg,
                 timestamp: updatedBMI.timestamp.toISOString()
-            };
-            console.log('[PAYMENT] [EMIT] Emitting payment-success to room:', {
-                roomName: roomName,
-                screenId: updatedBMI.screenId,
-                socketCount: socketCount,
-                payload: paymentPayload
             });
-            io.to(roomName).emit('payment-success', paymentPayload);
-            console.log('[PAYMENT] [EMIT] ✅ payment-success event emitted to room:', roomName);
             console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId);
         } else {
             console.log('[PAYMENT] F2 version - skipping socket emission to Android');
@@ -396,10 +360,7 @@ exports.progressStart = async (req, res, io) => {
         
         // Emit progress start to Android screen
         if (io) {
-            const roomName = `screen:${bmiData.screenId}`;
-            const room = io.sockets.adapter.rooms.get(roomName);
-            const socketCount = room ? room.size : 0;
-            const progressPayload = {
+            io.to(`screen:${bmiData.screenId}`).emit('progress-start', {
                 bmiId: bmiData.id,
                 screenId: bmiData.screenId,
                 userId: bmiData.userId,
@@ -410,17 +371,7 @@ exports.progressStart = async (req, res, io) => {
                 weight: bmiData.weightKg,
                 timestamp: bmiData.timestamp.toISOString(),
                 progressComplete: true // Flag to indicate this is progress start data
-            };
-            console.log('[PROGRESS] [EMIT] Emitting progress-start to room:', {
-                roomName: roomName,
-                screenId: bmiData.screenId,
-                socketCount: socketCount,
-                payload: progressPayload
             });
-            io.to(roomName).emit('progress-start', progressPayload);
-            console.log('[PROGRESS] [EMIT] ✅ progress-start event emitted to room:', roomName);
-        } else {
-            console.log('[PROGRESS] [EMIT] ⚠️ Socket.IO not available, cannot emit progress-start');
         }
         
         console.log('[PROGRESS] Start emitted to screen:', bmiData.screenId);
@@ -491,17 +442,7 @@ exports.fortuneGenerate = async (req, res, io) => {
         
         // Emit fortune to Android screen (only for non-F2 versions)
         if (appVersion !== 'f2' && io) {
-            const roomName = `screen:${bmiData.screenId}`;
-            const room = io.sockets.adapter.rooms.get(roomName);
-            const socketCount = room ? room.size : 0;
-            console.log('[FORTUNE] [EMIT] Emitting fortune-ready to room:', {
-                roomName: roomName,
-                screenId: bmiData.screenId,
-                socketCount: socketCount,
-                payload: fortuneData
-            });
-            io.to(roomName).emit('fortune-ready', fortuneData);
-            console.log('[FORTUNE] [EMIT] ✅ fortune-ready event emitted to room:', roomName);
+            io.to(`screen:${bmiData.screenId}`).emit('fortune-ready', fortuneData);
             console.log('[FORTUNE] Generated and emitted to screen:', bmiData.screenId);
         } else {
             console.log('[FORTUNE] F2 version - skipping socket emission to Android');
@@ -734,70 +675,5 @@ exports.debugConnections = (req, res, io) => {
     }
 };
 
-/**
- * POST /api/token/claim -> Claim token when client scans QR
- */
-exports.claimToken = (req, res) => {
-    try {
-        const { token } = req.body || {};
-        if (!token) {
-            return res.status(400).json({ error: 'token required' });
-        }
-        
-        const clientId = req.headers['x-client-id'] || req.ip || 'unknown';
-        const result = tokenManager.claimToken(token, clientId);
-        
-        if (result.valid) {
-            console.log('[TOKEN] Token claimed successfully:', { token, clientId });
-            return res.json({ 
-                ok: true, 
-                token: result.tokenData,
-                expiresAt: result.tokenData.expiresAt
-            });
-        } else {
-            console.log('[TOKEN] Token claim failed:', { token, error: result.error });
-            return res.status(400).json({ error: result.error });
-        }
-    } catch (e) {
-        console.error('[TOKEN] Claim error:', e);
-        return res.status(500).json({ error: 'internal_error' });
-    }
-};
 
-/**
- * GET /api/token/:token/status -> Get token status
- */
-exports.getTokenStatus = (req, res) => {
-    try {
-        const { token } = req.params || {};
-        if (!token) {
-            return res.status(400).json({ error: 'token_required' });
-        }
-
-        const tokenData = tokenManager.getToken(token);
-        if (!tokenData) {
-            return res.status(404).json({ error: 'token_not_found' });
-        }
-
-        const now = Date.now();
-        const isExpired = now > tokenData.expiresAt;
-        const isUnusedTimeout = now > tokenData.unusedTimeout;
-
-        return res.json({
-            ok: true,
-            token: {
-                screenId: tokenData.screenId,
-                bmiId: tokenData.bmiId,
-                state: tokenData.state,
-                isExpired,
-                isUnusedTimeout,
-                expiresAt: tokenData.expiresAt,
-                lastActivity: tokenData.lastActivity
-            }
-        });
-    } catch (e) {
-        console.error('[TOKEN] GET /api/token/:token/status error', e);
-        return res.status(500).json({ error: 'internal_error' });
-    }
-};
 

@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const bmiFlowController = require('../controllers/bmiFlowController');
-const sessionController = require('../controllers/sessionController');
 
 // Export a function that accepts io
 module.exports = (io) => {
@@ -31,16 +30,6 @@ module.exports = (io) => {
 
     // GET /api/debug/connections -> Debug socket connections
     router.get('/debug/connections', (req, res) => bmiFlowController.debugConnections(req, res, io));
-    
-    // POST /api/token/claim -> Claim token when QR is scanned
-    router.post('/token/claim', (req, res) => bmiFlowController.claimToken(req, res));
-    
-    // GET /api/token/:token/status -> Get token status
-    router.get('/token/:token/status', (req, res) => bmiFlowController.getTokenStatus(req, res));
-
-    // Header-based secure session endpoints
-    router.post('/session/claim', sessionController.sessionClaim);
-    router.get('/session/status', sessionController.sessionStatus);
 
     return router;
 };

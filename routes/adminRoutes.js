@@ -11,9 +11,6 @@ router.get('/admin/bmi-stats', adminController.getBMIStats);
 router.get('/admin/user-activity', adminController.getUserActivity);
 router.get('/admin/weight-classification', adminController.getWeightClassification);
 
-// Users management routes
-router.get('/admin/users', adminController.getAllUsers);
-
 module.exports = router;
 
 

@@ -27,7 +27,7 @@ const io = new Server(server, {
 			'*' // Allow all for development
 		],
 		methods: ['GET', 'POST'],
-		allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'x-bmi-token', 'x-bmi-session', 'x-client-id'],
+		allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 		credentials: true
 	}
 });
@@ -50,7 +50,7 @@ app.use(cors({
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'x-bmi-token', 'x-bmi-session', 'x-client-id']
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
 }));
 
 // Manual CORS headers as fallback
@@ -73,7 +73,7 @@ app.use((req, res, next) => {
         res.header('Access-Control-Allow-Origin', origin);
     }
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, x-bmi-token, x-bmi-session, x-client-id');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning');
     res.header('Access-Control-Allow-Credentials', 'true');
     
     if (req.method === 'OPTIONS') {
@@ -112,195 +112,24 @@ const registrationRoutes = require('./routes/registrationRoutes');
 
 // Players join rooms by screenId
 io.on('connection', (socket) => {
-    const authToken = socket.handshake.auth && socket.handshake.auth.bmiToken;
-    console.log('[SOCKET] [CONNECT] ✅ New connection:', {
-        socketId: socket.id,
-        address: socket.handshake.address,
-        headers: socket.handshake.headers,
-        query: socket.handshake.query,
-        transport: socket.conn.transport.name,
-        bmiToken: authToken || null
-    });
-
-    // Optionally validate the BMI token against our in-memory store
-    if (authToken) {
-        try {
-            const tokenManager = require('./controllers/tokenManager');
-            const tokenData = tokenManager.getToken(authToken);
-            if (tokenData) {
-                console.log('[SOCKET] [AUTH] ✅ BMI token is valid for screenId:', tokenData.screenId);
-                socket.data.bmiToken = authToken;
-                socket.data.screenIdFromToken = tokenData.screenId;
-            } else {
-                console.log('[SOCKET] [AUTH] ⚠️ BMI token not found or expired');
-            }
-        } catch (e) {
-            console.error('[SOCKET] [AUTH] Error validating BMI token:', e);
-        }
-    }
+    console.log('[SOCKET] connected', socket.id, 'from', socket.handshake.address);
 
     socket.on('player-join', (data) => {
 		try {
-            console.log('[SOCKET] [JOIN] player-join event received:', {
-                socketId: socket.id,
-                data: data,
-                dataType: typeof data,
-                screenId: data?.screenId,
-                machineId: data?.machineId,
-                type: data?.type
-            });
             const screenId = String(data?.screenId || '');
-            const machineId = String(data?.machineId || '');
-            const clientType = String(data?.type || 'unknown');
-            
-            console.log('[SOCKET] [JOIN] Parsed join data:', { socketId: socket.id, screenId, machineId, clientType });
-            
+            console.log('[SOCKET] player-join', { socketId: socket.id, screenId, data });
 			if (screenId) {
-				const roomName = `screen:${screenId}`;
-				socket.join(roomName);
-                console.log(`[SOCKET] [JOIN] ✅ Socket ${socket.id} joined room: ${roomName}`);
-                console.log(`[SOCKET] [JOIN] Room ${roomName} now has ${io.sockets.adapter.rooms.get(roomName)?.size || 0} socket(s)`);
-			} else {
-                console.log('[SOCKET] [JOIN] ⚠️ No screenId provided, cannot join room');
-            }
+				socket.join(`screen:${screenId}`);
+                console.log(`[SOCKET] joined room screen:${screenId}`);
+			}
 		} catch (e) {
-            console.error('[SOCKET] [JOIN] ❌ player-join error:', e);
+            console.error('[SOCKET] player-join error', e);
 		}
 	});
 
     socket.on('disconnect', (reason) => {
-        console.log('[SOCKET] [DISCONNECT] Socket disconnected:', {
-            socketId: socket.id,
-            reason: reason
-        });
+        console.log('[SOCKET] disconnected', socket.id, 'reason:', reason);
 	});
-
-    // Optional: Android can emit an explicit "android-ready" event once fully initialized
-    socket.on('android-ready', (data = {}) => {
-        try {
-            const screenId = String(data.screenId || data.machineId || '');
-            console.log('[SOCKET] [ANDROID-READY] Android reported ready:', {
-                socketId: socket.id,
-                screenId,
-                data
-            });
-
-            if (screenId) {
-                const roomName = `screen:${screenId}`;
-                console.log('[SOCKET] [ANDROID-READY] Broadcasting android-ready to room:', roomName);
-                io.to(roomName).emit('android-ready', {
-                    screenId,
-                    timestamp: Date.now()
-                });
-                console.log('[SOCKET] [ANDROID-READY] ✅ Broadcasted android-ready to room:', roomName);
-            }
-        } catch (e) {
-            console.error('[SOCKET] [ANDROID-READY] Error:', e);
-        }
-    });
-
-    // Web client can notify that a token/session has expired
-    socket.on('token-expired', (data = {}) => {
-        try {
-            const screenId = String(data.screenId || data.machineId || '');
-            const token = String(data.token || '');
-            console.log('[SOCKET] [TOKEN-EXPIRED] Token expired notification from client:', {
-                socketId: socket.id,
-                screenId,
-                token,
-                data
-            });
-
-            if (screenId && token) {
-                const roomName = `screen:${screenId}`;
-                console.log('[SOCKET] [TOKEN-EXPIRED] Broadcasting token-expired to room:', roomName);
-                io.to(roomName).emit('token-expired', {
-                    screenId,
-                    token,
-                    timestamp: Date.now()
-                });
-                console.log('[SOCKET] [TOKEN-EXPIRED] ✅ Broadcasted token-expired to room:', roomName);
-            }
-        } catch (e) {
-            console.error('[SOCKET] [TOKEN-EXPIRED] Error:', e);
-        }
-    });
-    
-    // Listen for screen state change from Android
-    socket.on('screen-state-change', (data) => {
-        try {
-            const screenId = String(data?.screenId || '');
-            const state = String(data?.state || '');
-            const token = String(data?.token || '');
-            console.log('[SOCKET] [SCREEN-STATE] Android screen state changed:', {
-                socketId: socket.id,
-                screenId: screenId,
-                state: state,
-                token: token,
-                data: data
-            });
-            
-            // Update token state if token provided
-            if (token) {
-                const tokenManager = require('./controllers/tokenManager');
-                tokenManager.updateTokenState(token, state, socket.id);
-            }
-            
-            if (screenId && state) {
-                // Broadcast to all clients in the room (including web client)
-                const roomName = `screen:${screenId}`;
-                console.log('[SOCKET] [SCREEN-STATE] Broadcasting to room:', roomName, 'state:', state);
-                io.to(roomName).emit('android-screen-state', {
-                    screenId: screenId,
-                    state: state, // "qr", "loading", "bmi", "fortune"
-                    token: token,
-                    timestamp: data?.timestamp || Date.now()
-                });
-                console.log('[SOCKET] [SCREEN-STATE] ✅ Broadcasted to room:', roomName, 'state:', state);
-            }
-        } catch (e) {
-            console.error('[SOCKET] [SCREEN-STATE] Error:', e);
-        }
-    });
-    
-    // Listen for payment-received confirmation from Android (legacy, keeping for compatibility)
-    socket.on('payment-received', (data) => {
-        try {
-            const screenId = String(data?.screenId || '');
-            console.log('[SOCKET] [PAYMENT-RECEIVED] Android confirmed payment received:', {
-                socketId: socket.id,
-                screenId: screenId,
-                data: data
-            });
-            
-            if (screenId) {
-                // Broadcast to all clients in the room (including web client)
-                const roomName = `screen:${screenId}`;
-                console.log('[SOCKET] [PAYMENT-RECEIVED] Broadcasting to room:', roomName);
-                io.to(roomName).emit('android-payment-received', {
-                    screenId: screenId,
-                    timestamp: data?.timestamp || Date.now()
-                });
-                console.log('[SOCKET] [PAYMENT-RECEIVED] ✅ Broadcasted to room:', roomName);
-            }
-        } catch (e) {
-            console.error('[SOCKET] [PAYMENT-RECEIVED] Error:', e);
-        }
-    });
-    
-    // Log all events for debugging
-    const originalOnevent = socket.onevent;
-    socket.onevent = function (packet) {
-        const args = packet.data || [];
-        if (args[0] && args[0] !== 'player-join' && args[0] !== 'disconnect' && args[0] !== 'payment-received') {
-            console.log('[SOCKET] [EVENT] Received event:', {
-                socketId: socket.id,
-                event: args[0],
-                data: args.slice(1)
-            });
-        }
-        originalOnevent.call(this, packet);
-    };
 });
 
 // Health
