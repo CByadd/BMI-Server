@@ -24,6 +24,7 @@ const io = new Server(server, {
 			'https://billboard-admin-x.vercel.app',
 			'http://127.0.0.1:5500',
             'https://bmi-client.onrender.com',
+            'https://bmi-admin-pi.vercel.app',
 			'*' // Allow all for development
 		],
 		methods: ['GET', 'POST'],
@@ -46,7 +47,8 @@ app.use(cors({
         'https://admin.adscape.co.in',
         'https://billboard-admin-x.vercel.app',
         'http://127.0.0.1:5500',
-        'https://bmi-client.onrender.com'
+        'https://bmi-client.onrender.com',
+        'https://bmi-admin-pi.vercel.app'
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

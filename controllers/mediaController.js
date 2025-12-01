@@ -14,7 +14,7 @@ cloudinary.config({
 const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto') => {
   return new Promise((resolve, reject) => {
     const uploadOptions = {
-      folder: folder || 'bmi-media',
+      folder: folder || 'well2day-media',
       resource_type: resourceType,
       use_filename: true,
       unique_filename: true,
@@ -51,8 +51,8 @@ exports.uploadMedia = async (req, res) => {
         // Determine resource type (image or video)
         const resourceType = file.mimetype.startsWith('video/') ? 'video' : 'image';
         
-        // Upload to Cloudinary
-        const result = await uploadToCloudinary(file.buffer, 'bmi-media', resourceType);
+        // Upload to Cloudinary - use well2day-media folder
+        const result = await uploadToCloudinary(file.buffer, 'well2day-media', resourceType);
 
         // Store media info in database (if you have a media table)
         // For now, we'll return the Cloudinary URLs
@@ -100,21 +100,103 @@ exports.getAllMedia = async (req, res) => {
   try {
     const { type, search, tags } = req.query;
 
-    // For now, return empty array since we're not storing in DB yet
-    // You can implement database storage if needed
-    // const media = await prisma.media.findMany({...});
-    
-    // Option 1: Fetch from Cloudinary API (if you want to list all uploaded files)
-    // This requires Cloudinary Admin API
-    // const result = await cloudinary.search.expression('folder:bmi-media').execute();
-    
-    // Option 2: Store media metadata in database and fetch from there
-    // For now, return empty array
-    res.json({
-      ok: true,
-      media: [],
-      total: 0
-    });
+    // Fetch from Cloudinary using Admin API
+    try {
+      // Build search expression - search in well2day-media folder and all subfolders
+      // Cloudinary syntax: folder:well2day-media/* finds files in folder and all subfolders
+      // folder:well2day-media (without /*) finds only files directly in the folder
+      let expression = 'folder:well2day-media/*';
+      
+      // Also include legacy bmi-media folder if it exists
+      // expression = '(folder:well2day-media/* OR folder:bmi-media/*)';
+      
+      if (type) {
+        if (type === 'image') {
+          expression += ' AND resource_type:image';
+        } else if (type === 'video') {
+          expression += ' AND resource_type:video';
+        }
+      }
+      
+      if (search) {
+        expression += ` AND filename:*${search}*`;
+      }
+      
+      if (tags && Array.isArray(tags)) {
+        tags.forEach(tag => {
+          expression += ` AND tags:${tag}`;
+        });
+      } else if (tags) {
+        expression += ` AND tags:${tags}`;
+      }
+
+      console.log('[MEDIA] Fetching media with expression:', expression);
+      console.log('[MEDIA] Cloudinary config check:', {
+        cloudName: process.env.CLOUDINARY_CLOUD_NAME ? 'set' : 'missing',
+        apiKey: process.env.CLOUDINARY_API_KEY ? 'set' : 'missing',
+        apiSecret: process.env.CLOUDINARY_API_SECRET ? 'set' : 'missing'
+      });
+      
+      // Use Cloudinary Admin API to search for resources
+      // sort_by syntax: .sort_by('field_name', 'asc'|'desc')
+      const result = await cloudinary.search
+        .expression(expression)
+        .sort_by('created_at', 'desc')
+        .max_results(500)
+        .execute();
+      
+      console.log('[MEDIA] Cloudinary search result:', {
+        totalCount: result.total_count,
+        resourcesFound: result.resources?.length || 0
+      });
+
+      // Transform Cloudinary results to match expected format
+      const media = result.resources.map((resource) => {
+        const isVideo = resource.resource_type === 'video';
+        return {
+          id: resource.public_id,
+          publicId: resource.public_id,
+          name: resource.filename || resource.public_id.split('/').pop() || 'Untitled',
+          type: isVideo ? 'video' : 'image',
+          resource_type: resource.resource_type,
+          url: resource.secure_url,
+          secure_url: resource.secure_url,
+          format: resource.format,
+          width: resource.width,
+          height: resource.height,
+          size: resource.bytes,
+          duration: resource.duration || null, // For videos
+          tags: resource.tags || [],
+          createdAt: resource.created_at,
+          updatedAt: resource.updated_at || resource.created_at
+        };
+      });
+
+      console.log(`[MEDIA] Found ${media.length} media items`);
+      
+      res.json({
+        ok: true,
+        media: media,
+        total: media.length
+      });
+    } catch (cloudinaryError) {
+      console.error('[MEDIA] Cloudinary search error:', cloudinaryError);
+      // If Cloudinary search fails, try to check if it's a permissions issue
+      if (cloudinaryError.message && cloudinaryError.message.includes('401')) {
+        console.error('[MEDIA] Cloudinary authentication failed. Check API credentials.');
+        return res.status(500).json({ 
+          error: 'Cloudinary authentication failed',
+          details: 'Check API credentials in environment variables'
+        });
+      }
+      // Return empty array if search fails (might be permissions issue)
+      res.json({
+        ok: true,
+        media: [],
+        total: 0,
+        warning: 'Could not fetch from Cloudinary. Check API credentials.'
+      });
+    }
   } catch (error) {
     console.error('[MEDIA] Get media error:', error);
     res.status(500).json({ error: 'Failed to fetch media' });
@@ -124,16 +206,32 @@ exports.getAllMedia = async (req, res) => {
 // Delete media from Cloudinary
 exports.deleteMedia = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { publicId } = req.body;
+    const { publicId, resourceType } = req.body;
 
     if (!publicId) {
       return res.status(400).json({ error: 'Public ID required' });
     }
+    
+    // Determine resource type from publicId or use provided type
+    // Check if publicId contains video-related paths or extensions
+    let finalResourceType = resourceType || 'image';
+    if (!resourceType) {
+      // Try to determine from publicId path
+      if (publicId.toLowerCase().includes('/videos/') || 
+          publicId.toLowerCase().endsWith('.mp4') || 
+          publicId.toLowerCase().endsWith('.mov') ||
+          publicId.toLowerCase().endsWith('.avi')) {
+        finalResourceType = 'video';
+      } else {
+        finalResourceType = 'image';
+      }
+    }
+    
+    console.log('[MEDIA] Deleting media with publicId:', publicId, 'resourceType:', finalResourceType);
 
-    // Delete from Cloudinary
+    // Delete from Cloudinary - must specify resource_type explicitly
     const result = await cloudinary.uploader.destroy(publicId, {
-      resource_type: 'auto'
+      resource_type: finalResourceType
     });
 
     if (result.result === 'ok') {

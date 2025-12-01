@@ -165,36 +165,67 @@ exports.updatePlaylist = async (req, res) => {
     const { id } = req.params;
     const { name, description, tags, slots } = req.body;
 
-    const tagsArray = tags ? (typeof tags === 'string' ? tags.split(',').map(t => t.trim()).filter(t => t) : tags) : [];
+    console.log('[PLAYLIST] Update request:', { id, hasName: name !== undefined, hasSlots: slots !== undefined });
 
-    try {
-      // Build update query dynamically
-      const updates = [];
-      if (name !== undefined) updates.push(`name = '${name.replace(/'/g, "''")}'`);
-      if (description !== undefined) updates.push(`description = '${(description || '').replace(/'/g, "''")}'`);
-      if (tags !== undefined) updates.push(`tags = '${JSON.stringify(tagsArray).replace(/'/g, "''")}'`);
-      if (slots !== undefined) updates.push(`slots = '${JSON.stringify(slots).replace(/'/g, "''")}'`);
-      updates.push(`updated_at = NOW()`);
+    // First check if playlist exists
+    const existingResult = await prisma.$queryRaw`
+      SELECT id FROM playlists WHERE id = ${id}
+    `;
+    
+    if (!existingResult || existingResult.length === 0) {
+      console.log('[PLAYLIST] Playlist not found, creating new one:', id);
+      // Playlist doesn't exist, create it
+      const tagsArray = tags ? (typeof tags === 'string' ? tags.split(',').map(t => t.trim()).filter(t => t) : tags) : [];
+      const playlistName = name || `Playlist ${id}`;
+      
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO playlists (id, name, description, tags, slots, created_at, updated_at)
+        VALUES (
+          '${id.replace(/'/g, "''")}',
+          '${playlistName.replace(/'/g, "''")}',
+          '${(description || '').replace(/'/g, "''")}',
+          '${JSON.stringify(tagsArray).replace(/'/g, "''")}',
+          '${JSON.stringify(slots || []).replace(/'/g, "''")}',
+          NOW(),
+          NOW()
+        )
+      `);
+      console.log('[PLAYLIST] Created new playlist:', id);
+    } else {
+      // Playlist exists, update it
+      const tagsArray = tags ? (typeof tags === 'string' ? tags.split(',').map(t => t.trim()).filter(t => t) : tags) : [];
 
-      if (updates.length > 0) {
-        await prisma.$executeRawUnsafe(`
-          UPDATE playlists 
-          SET ${updates.join(', ')}
-          WHERE id = '${id.replace(/'/g, "''")}'
-        `);
+      try {
+        // Build update query dynamically
+        const updates = [];
+        if (name !== undefined) updates.push(`name = '${name.replace(/'/g, "''")}'`);
+        if (description !== undefined) updates.push(`description = '${(description || '').replace(/'/g, "''")}'`);
+        if (tags !== undefined) updates.push(`tags = '${JSON.stringify(tagsArray).replace(/'/g, "''")}'`);
+        if (slots !== undefined) updates.push(`slots = '${JSON.stringify(slots).replace(/'/g, "''")}'`);
+        updates.push(`updated_at = NOW()`);
+
+        if (updates.length > 0) {
+          const updateResult = await prisma.$executeRawUnsafe(`
+            UPDATE playlists 
+            SET ${updates.join(', ')}
+            WHERE id = '${id.replace(/'/g, "''")}'
+          `);
+          console.log('[PLAYLIST] Update query executed, rows affected:', updateResult);
+        }
+      } catch (dbError) {
+        console.error('[PLAYLIST] Update error:', dbError);
+        return res.status(500).json({ error: 'Failed to update playlist' });
       }
-    } catch (dbError) {
-      console.error('[PLAYLIST] Update error:', dbError);
-      return res.status(500).json({ error: 'Failed to update playlist' });
     }
 
-    // Get updated playlist
+    // Get updated/created playlist
     const results = await prisma.$queryRaw`
       SELECT * FROM playlists WHERE id = ${id}
     `;
     const playlist = results[0];
 
     if (!playlist) {
+      console.error('[PLAYLIST] Playlist still not found after create/update:', id);
       return res.status(404).json({ error: 'Playlist not found' });
     }
 
