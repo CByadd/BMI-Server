@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d';
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '60d';
 
 // Helper function to generate JWT token
 const generateToken = (admin) => {
@@ -371,6 +371,7 @@ exports.getAdminScreens = async (req, res) => {
     res.status(500).json({ error: 'Failed to get admin screens' });
   }
 };
+
 
 
 
