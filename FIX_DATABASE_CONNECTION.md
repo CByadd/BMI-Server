@@ -67,3 +67,5 @@ psql "postgresql://well2day%40well2day-postgresqldatabase:Adscape%402k25@well2da
 After adding the firewall rule, the connection should work immediately.
 
 
+
+
