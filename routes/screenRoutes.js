@@ -11,8 +11,8 @@ module.exports = (io) => {
     // Register or update an Adscape player (no auth for Android)
     router.post('/adscape/register', screenController.registerPlayer);
 
-    // Get a specific player by screenId (require auth and screen access)
-    router.get('/adscape/player/:screenId', authenticateToken, checkScreenAccess, screenController.getPlayer);
+    // Get a specific player by screenId (no auth for Android app to check own flow type)
+    router.get('/adscape/player/:screenId', screenController.getPlayer);
 
     // Get player by registration code (8-digit) - no auth for Android
     router.get('/adscape/player-by-code/:code', screenController.getPlayerByCode);
