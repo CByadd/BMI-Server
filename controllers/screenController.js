@@ -147,7 +147,13 @@ exports.getPlayer = async (req, res) => {
  */
 exports.getAllPlayers = async (req, res) => {
     try {
+        // Filter by role: super_admin sees all, admin sees only assigned screens
+        const whereClause = req.user.role === 'super_admin'
+            ? {}
+            : { screenId: { in: req.user.assignedScreenIds } };
+        
         const players = await prisma.adscapePlayer.findMany({
+            where: whereClause,
             orderBy: { createdAt: 'desc' }
         });
         

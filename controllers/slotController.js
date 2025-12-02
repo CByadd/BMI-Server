@@ -117,28 +117,40 @@ exports.getAssetsByScreen = async (req, res) => {
           console.log('[ASSETS] Found playlist with', slots.length, 'slots');
           
           // Convert playlist slots to asset format
+          // Filter out empty slots (null or undefined) and slots without URLs
           const assets = slots
-            .filter((slot) => {
+            .map((slot, index) => {
+              // Skip null/undefined slots
+              if (!slot || slot === null) return null;
+              
+              // Get asset URL
+              const assetUrl = slot.asset_url || slot.url;
+              
+              // Skip slots without URLs
+              if (!assetUrl || assetUrl.trim() === '') return null;
+              
               // Filter slots that are active for the target date
               if (slot.start_date && slot.end_date) {
                 const slotStart = new Date(slot.start_date);
                 const slotEnd = new Date(slot.end_date);
                 slotStart.setHours(0, 0, 0, 0);
                 slotEnd.setHours(23, 59, 59, 999);
-                return targetDate >= slotStart && targetDate <= slotEnd;
+                const isInDateRange = targetDate >= slotStart && targetDate <= slotEnd;
+                if (!isInDateRange) return null;
               }
-              // If no date range, include the slot
-              return true;
+              
+              // Return valid asset
+              return {
+                asset_url: assetUrl,
+                slot_number: slot.slot_number || (index + 1),
+                duration: slot.duration || 10,
+                start_date: slot.start_date || start.toISOString(),
+                end_date: slot.end_date || end.toISOString()
+              };
             })
-            .map((slot, index) => ({
-              asset_url: slot.asset_url || slot.url,
-              slot_number: slot.slot_number || (index + 1),
-              duration: slot.duration || 10,
-              start_date: slot.start_date || start.toISOString(),
-              end_date: slot.end_date || end.toISOString()
-            }));
+            .filter(asset => asset !== null); // Remove null entries
           
-          console.log('[ASSETS] Returning', assets.length, 'assets from playlist');
+          console.log('[ASSETS] Returning', assets.length, 'assets from playlist (filtered empty slots)');
           return res.json(assets);
         }
       } catch (playlistError) {

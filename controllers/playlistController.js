@@ -3,12 +3,26 @@ const prisma = require('../db');
 // Get all playlists
 exports.getAllPlaylists = async (req, res) => {
   try {
+    const adminId = req.user?.id;
+    const userRole = req.user?.role;
+
     // Try to get from database first
     let playlists = [];
     try {
-      playlists = await prisma.$queryRaw`
-        SELECT * FROM playlists ORDER BY updated_at DESC
-      `;
+      // Filter by creator: super_admin sees all, regular admin sees only their own
+      if (userRole === 'super_admin') {
+        playlists = await prisma.$queryRaw`
+          SELECT * FROM playlists ORDER BY updated_at DESC
+        `;
+      } else if (adminId) {
+        playlists = await prisma.$queryRaw`
+          SELECT * FROM playlists 
+          WHERE created_by = ${adminId}
+          ORDER BY updated_at DESC
+        `;
+      } else {
+        playlists = [];
+      }
     } catch (dbError) {
       // If table doesn't exist, return empty array
       console.log('[PLAYLIST] Table may not exist, returning empty array');
@@ -65,6 +79,8 @@ exports.getAllPlaylists = async (req, res) => {
 exports.getPlaylistById = async (req, res) => {
   try {
     const { id } = req.params;
+    const adminId = req.user?.id;
+    const userRole = req.user?.role;
     
     let playlist = null;
     try {
@@ -78,6 +94,11 @@ exports.getPlaylistById = async (req, res) => {
 
     if (!playlist) {
       return res.status(404).json({ error: 'Playlist not found' });
+    }
+
+    // Check access: super_admin can access all, regular admin can only access their own
+    if (userRole !== 'super_admin' && adminId && playlist.created_by !== adminId) {
+      return res.status(403).json({ error: 'Access denied to this playlist' });
     }
 
     const slots = playlist.slots ? JSON.parse(playlist.slots) : [];
@@ -102,7 +123,8 @@ exports.getPlaylistById = async (req, res) => {
 // Create playlist
 exports.createPlaylist = async (req, res) => {
   try {
-    const { name, description, tags } = req.body;
+    const { name, description, tags, slots } = req.body;
+    const adminId = req.user?.id;
     
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Playlist name is required' });
@@ -110,13 +132,14 @@ exports.createPlaylist = async (req, res) => {
 
     const id = `playlist-${Date.now()}`;
     const tagsArray = tags ? (typeof tags === 'string' ? tags.split(',').map(t => t.trim()).filter(t => t) : tags) : [];
-    const slots = Array(8).fill(null);
+    // Use provided slots or default to empty array of 8 nulls
+    const playlistSlots = slots && Array.isArray(slots) ? slots : Array(8).fill(null);
 
     try {
-      // Try to insert into database
+      // Try to insert into database with created_by
       await prisma.$executeRaw`
-        INSERT INTO playlists (id, name, description, tags, slots, created_at, updated_at)
-        VALUES (${id}, ${name}, ${description || ''}, ${JSON.stringify(tagsArray)}, ${JSON.stringify(slots)}, NOW(), NOW())
+        INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
+        VALUES (${id}, ${name}, ${description || ''}, ${JSON.stringify(tagsArray)}, ${JSON.stringify(playlistSlots)}, ${adminId || null}, NOW(), NOW())
       `;
     } catch (dbError) {
       // If table doesn't exist, create it
@@ -129,13 +152,18 @@ exports.createPlaylist = async (req, res) => {
             description TEXT,
             tags TEXT,
             slots TEXT,
+            created_by UUID,
             created_at TIMESTAMP,
             updated_at TIMESTAMP
           )
         `;
+        // Add index if it doesn't exist
+        await prisma.$executeRawUnsafe(`
+          CREATE INDEX IF NOT EXISTS idx_playlists_created_by ON playlists(created_by);
+        `);
         await prisma.$executeRaw`
-          INSERT INTO playlists (id, name, description, tags, slots, created_at, updated_at)
-          VALUES (${id}, ${name}, ${description || ''}, ${JSON.stringify(tagsArray)}, ${JSON.stringify(slots)}, NOW(), NOW())
+          INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
+          VALUES (${id}, ${name}, ${description || ''}, ${JSON.stringify(tagsArray)}, ${JSON.stringify(playlistSlots)}, ${adminId || null}, NOW(), NOW())
         `;
       } catch (createError) {
         console.error('[PLAYLIST] Create table error:', createError);
@@ -150,7 +178,7 @@ exports.createPlaylist = async (req, res) => {
         name,
         description: description || '',
         tags: tagsArray,
-        slots: slots,
+        slots: playlistSlots,
       },
     });
   } catch (error) {
@@ -164,13 +192,24 @@ exports.updatePlaylist = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, tags, slots } = req.body;
+    const adminId = req.user?.id;
+    const userRole = req.user?.role;
 
     console.log('[PLAYLIST] Update request:', { id, hasName: name !== undefined, hasSlots: slots !== undefined });
 
     // First check if playlist exists
     const existingResult = await prisma.$queryRaw`
-      SELECT id FROM playlists WHERE id = ${id}
+      SELECT id, created_by FROM playlists WHERE id = ${id}
     `;
+    
+    // Check access if playlist exists
+    if (existingResult && existingResult.length > 0) {
+      const playlist = existingResult[0];
+      // Super admin can update any, regular admin can only update their own
+      if (userRole !== 'super_admin' && adminId && playlist.created_by !== adminId) {
+        return res.status(403).json({ error: 'You can only update playlists you created' });
+      }
+    }
     
     if (!existingResult || existingResult.length === 0) {
       console.log('[PLAYLIST] Playlist not found, creating new one:', id);
@@ -179,13 +218,14 @@ exports.updatePlaylist = async (req, res) => {
       const playlistName = name || `Playlist ${id}`;
       
       await prisma.$executeRawUnsafe(`
-        INSERT INTO playlists (id, name, description, tags, slots, created_at, updated_at)
+        INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
         VALUES (
           '${id.replace(/'/g, "''")}',
           '${playlistName.replace(/'/g, "''")}',
           '${(description || '').replace(/'/g, "''")}',
           '${JSON.stringify(tagsArray).replace(/'/g, "''")}',
           '${JSON.stringify(slots || []).replace(/'/g, "''")}',
+          '${adminId ? adminId.replace(/'/g, "''") : null}',
           NOW(),
           NOW()
         )
@@ -252,8 +292,25 @@ exports.updatePlaylist = async (req, res) => {
 exports.deletePlaylist = async (req, res) => {
   try {
     const { id } = req.params;
+    const adminId = req.user?.id;
+    const userRole = req.user?.role;
 
+    // Check if playlist exists and user has permission
     try {
+      const existingResult = await prisma.$queryRaw`
+        SELECT id, created_by FROM playlists WHERE id = ${id}
+      `;
+      
+      if (!existingResult || existingResult.length === 0) {
+        return res.status(404).json({ error: 'Playlist not found' });
+      }
+
+      const playlist = existingResult[0];
+      // Super admin can delete any, regular admin can only delete their own
+      if (userRole !== 'super_admin' && adminId && playlist.created_by !== adminId) {
+        return res.status(403).json({ error: 'You can only delete playlists you created' });
+      }
+
       await prisma.$executeRaw`
         DELETE FROM playlists WHERE id = ${id}
       `;

@@ -10,15 +10,16 @@
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate deploy",
     "postinstall": "npm install"
-
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
     "axios": "^1.12.2",
+    "bcryptjs": "^2.4.3",
     "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "prisma": "^5.20.0",
     "socket.io": "^4.7.5",

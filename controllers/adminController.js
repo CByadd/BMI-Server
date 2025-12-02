@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { getScreenFilter } = require('../middleware/authMiddleware');
 
 // GET dashboard statistics
 exports.getDashboardStats = async (req, res) => {
@@ -140,13 +141,22 @@ exports.getTopPerformers = async (req, res) => {
 // GET BMI statistics for admin dashboard
 exports.getBMIStats = async (req, res) => {
   try {
-    // Get total BMI records
-    const totalBMIRecords = await prisma.bMI.count();
+    const screenFilter = getScreenFilter(req.user);
     
-    // Get total unique users
-    const totalUsers = await prisma.user.count();
+    // Get total BMI records (filtered by screen)
+    const totalBMIRecords = await prisma.bMI.count({
+      where: screenFilter
+    });
     
-    // Get daily users (users who checked BMI today)
+    // Get total unique users (filtered by screen)
+    const uniqueUserIds = await prisma.bMI.findMany({
+      where: screenFilter,
+      select: { userId: true },
+      distinct: ['userId']
+    });
+    const totalUsers = uniqueUserIds.filter(u => u.userId !== null).length;
+    
+    // Get daily users (users who checked BMI today, filtered by screen)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayEnd = new Date(today);
@@ -154,6 +164,7 @@ exports.getBMIStats = async (req, res) => {
     
     const dailyUsers = await prisma.bMI.count({
       where: {
+        ...screenFilter,
         timestamp: {
           gte: today,
           lte: todayEnd
@@ -161,16 +172,20 @@ exports.getBMIStats = async (req, res) => {
       }
     });
     
-    // Get total screens
+    // Get total screens (filtered by role)
+    const screenWhere = req.user.role === 'super_admin' 
+      ? { isActive: true }
+      : { isActive: true, screenId: { in: req.user.assignedScreenIds } };
+    
     const totalScreens = await prisma.adscapePlayer.count({
-      where: { isActive: true }
+      where: screenWhere
     });
     
-    // Get active screens (online - seen within last 5 minutes)
+    // Get active screens (online - seen within last 5 minutes, filtered by role)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
     const activeScreens = await prisma.adscapePlayer.count({
       where: {
-        isActive: true,
+        ...screenWhere,
         lastSeen: {
           gte: fiveMinutesAgo
         }
@@ -193,6 +208,7 @@ exports.getBMIStats = async (req, res) => {
 // GET user activity data for charts (last 7 days)
 exports.getUserActivity = async (req, res) => {
   try {
+    const screenFilter = getScreenFilter(req.user);
     const data = [];
     const today = new Date();
     
@@ -206,6 +222,7 @@ exports.getUserActivity = async (req, res) => {
       
       const count = await prisma.bMI.count({
         where: {
+          ...screenFilter,
           timestamp: {
             gte: date,
             lt: nextDate
@@ -230,11 +247,21 @@ exports.getUserActivity = async (req, res) => {
 // GET weight classification distribution
 exports.getWeightClassification = async (req, res) => {
   try {
-    const classifications = await prisma.$queryRaw`
+    const screenFilter = getScreenFilter(req.user);
+    
+    // Build WHERE clause for screen filter
+    let whereClause = '';
+    if (req.user.role !== 'super_admin' && req.user.assignedScreenIds.length > 0) {
+      const screenIds = req.user.assignedScreenIds.map(id => `'${id}'`).join(',');
+      whereClause = `WHERE "screenId" IN (${screenIds})`;
+    }
+    
+    const classifications = await prisma.$queryRawUnsafe(`
       SELECT category, COUNT(*)::int as count
       FROM "BMI"
+      ${whereClause}
       GROUP BY category
-    `;
+    `);
     
     const total = classifications.reduce((sum, item) => sum + item.count, 0);
     
@@ -248,6 +275,81 @@ exports.getWeightClassification = async (req, res) => {
   } catch (error) {
     console.error('Error fetching weight classification:', error);
     res.status(500).json({ error: 'Failed to fetch weight classification' });
+  }
+};
+
+// GET all users (filtered by assigned screens)
+exports.getAllUsers = async (req, res) => {
+  try {
+    const screenFilter = getScreenFilter(req.user);
+    
+    // Get unique user IDs from BMI records that match the screen filter
+    let userIds = [];
+    
+    if (req.user.role === 'super_admin') {
+      // Super admin sees all users
+      const allUsers = await prisma.user.findMany({
+        select: { id: true },
+      });
+      userIds = allUsers.map(u => u.id);
+    } else if (req.user.assignedScreenIds.length > 0) {
+      // Regular admin: get users who have BMI records from assigned screens
+      const bmiRecords = await prisma.bMI.findMany({
+        where: {
+          screenId: { in: req.user.assignedScreenIds },
+          userId: { not: null }
+        },
+        select: { userId: true },
+        distinct: ['userId']
+      });
+      userIds = bmiRecords.map(b => b.userId).filter(id => id !== null);
+    }
+    
+    // Get users with their BMI data
+    const users = await prisma.user.findMany({
+      where: {
+        id: { in: userIds }
+      },
+      include: {
+        bmiData: {
+          where: screenFilter,
+          orderBy: { timestamp: 'desc' },
+          take: 1 // Get latest BMI record
+        },
+        _count: {
+          select: {
+            bmiData: {
+              where: screenFilter
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    // Format response
+    const formattedUsers = users.map(user => ({
+      id: user.id,
+      name: user.name,
+      mobile: user.mobile,
+      createdAt: user.createdAt,
+      totalBMIRecords: user._count.bmiData,
+      latestBMI: user.bmiData.length > 0 ? {
+        bmi: user.bmiData[0].bmi,
+        category: user.bmiData[0].category,
+        timestamp: user.bmiData[0].timestamp,
+        screenId: user.bmiData[0].screenId
+      } : null
+    }));
+    
+    res.json({
+      ok: true,
+      users: formattedUsers,
+      total: formattedUsers.length
+    });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 };
 

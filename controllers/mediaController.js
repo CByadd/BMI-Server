@@ -11,13 +11,14 @@ cloudinary.config({
 });
 
 // Helper function to upload to Cloudinary
-const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto') => {
+const uploadToCloudinary = (fileBuffer, folder, resourceType = 'auto', additionalOptions = {}) => {
   return new Promise((resolve, reject) => {
     const uploadOptions = {
       folder: folder || 'well2day-media',
       resource_type: resourceType,
       use_filename: true,
       unique_filename: true,
+      ...additionalOptions, // Merge any additional options (tags, context, etc.)
     };
 
     cloudinary.uploader.upload_stream(
@@ -42,6 +43,12 @@ exports.uploadMedia = async (req, res) => {
 
     const { name, tags } = req.body;
     const tagArray = tags ? tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [];
+    const adminId = req.user?.id; // Get admin ID from authenticated user
+
+    // Add admin ID to tags so we can filter by creator
+    if (adminId) {
+      tagArray.push(`admin:${adminId}`);
+    }
 
     const uploadedMedia = [];
 
@@ -51,8 +58,13 @@ exports.uploadMedia = async (req, res) => {
         // Determine resource type (image or video)
         const resourceType = file.mimetype.startsWith('video/') ? 'video' : 'image';
         
-        // Upload to Cloudinary - use well2day-media folder
-        const result = await uploadToCloudinary(file.buffer, 'well2day-media', resourceType);
+        // Upload to Cloudinary with admin ID in tags and context
+        const additionalOptions = {
+          tags: tagArray,
+          context: adminId ? { admin_id: adminId } : undefined,
+        };
+
+        const result = await uploadToCloudinary(file.buffer, 'well2day-media', resourceType, additionalOptions);
 
         // Store media info in database (if you have a media table)
         // For now, we'll return the Cloudinary URLs
@@ -99,6 +111,8 @@ exports.uploadMedia = async (req, res) => {
 exports.getAllMedia = async (req, res) => {
   try {
     const { type, search, tags } = req.query;
+    const adminId = req.user?.id;
+    const userRole = req.user?.role;
 
     // Fetch from Cloudinary using Admin API
     try {
@@ -106,6 +120,11 @@ exports.getAllMedia = async (req, res) => {
       // Cloudinary syntax: folder:well2day-media/* finds files in folder and all subfolders
       // folder:well2day-media (without /*) finds only files directly in the folder
       let expression = 'folder:well2day-media/*';
+      
+      // Filter by creator: super_admin sees all, regular admin sees only their own
+      if (userRole !== 'super_admin' && adminId) {
+        expression += ` AND tags:admin:${adminId}`;
+      }
       
       // Also include legacy bmi-media folder if it exists
       // expression = '(folder:well2day-media/* OR folder:bmi-media/*)';
@@ -124,9 +143,12 @@ exports.getAllMedia = async (req, res) => {
       
       if (tags && Array.isArray(tags)) {
         tags.forEach(tag => {
-          expression += ` AND tags:${tag}`;
+          // Don't add admin tag filter if it's already in the expression
+          if (!tag.startsWith('admin:')) {
+            expression += ` AND tags:${tag}`;
+          }
         });
-      } else if (tags) {
+      } else if (tags && !tags.startsWith('admin:')) {
         expression += ` AND tags:${tags}`;
       }
 
@@ -207,9 +229,32 @@ exports.getAllMedia = async (req, res) => {
 exports.deleteMedia = async (req, res) => {
   try {
     const { publicId, resourceType } = req.body;
+    const adminId = req.user?.id;
+    const userRole = req.user?.role;
 
     if (!publicId) {
       return res.status(400).json({ error: 'Public ID required' });
+    }
+
+    // Check if user has permission to delete this media
+    // Super admin can delete any, regular admin can only delete their own
+    if (userRole !== 'super_admin' && adminId) {
+      try {
+        // Get resource details from Cloudinary to check tags
+        const resource = await cloudinary.api.resource(publicId, {
+          resource_type: resourceType || 'image'
+        });
+        
+        // Check if the media has the admin tag
+        const hasAdminTag = resource.tags && resource.tags.some(tag => tag === `admin:${adminId}`);
+        if (!hasAdminTag) {
+          return res.status(403).json({ error: 'You can only delete media files you uploaded' });
+        }
+      } catch (checkError) {
+        console.error('[MEDIA] Error checking media ownership:', checkError);
+        // If we can't verify, deny access for safety
+        return res.status(403).json({ error: 'Unable to verify media ownership' });
+      }
     }
     
     // Determine resource type from publicId or use provided type

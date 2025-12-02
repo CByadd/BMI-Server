@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const mediaController = require('../controllers/mediaController');
 const multer = require('multer');
+const { authenticateToken } = require('../middleware/authMiddleware');
 
 // Configure multer to use memory storage (for Cloudinary)
 const upload = multer({
@@ -20,14 +21,14 @@ const upload = multer({
   }
 });
 
-// Upload media files
-router.post('/upload', upload.array('files', 10), mediaController.uploadMedia);
+// Upload media files (require auth)
+router.post('/upload', authenticateToken, upload.array('files', 10), mediaController.uploadMedia);
 
-// Get all media files
-router.get('/', mediaController.getAllMedia);
+// Get all media files (require auth, filtered by role)
+router.get('/', authenticateToken, mediaController.getAllMedia);
 
-// Delete media file - use delete endpoint with publicId in body
-router.delete('/delete', mediaController.deleteMedia);
+// Delete media file - use delete endpoint with publicId in body (require auth)
+router.delete('/delete', authenticateToken, mediaController.deleteMedia);
 
 module.exports = router;
 

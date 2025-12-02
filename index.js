@@ -304,6 +304,9 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 // Mount BMI Flow Routes
 app.use('/api', bmiFlowRoutes(io));
 
+// Mount Auth Routes
+app.use('/api', require('./routes/authRoutes'));
+
 // Mount Admin Panel Routes
 app.use('/api', adminRoutes);
 app.use('/api', screenRoutes(io)); // Pass io for real-time updates
@@ -322,7 +325,9 @@ server.listen(PORT, () => {
 	console.log(`Server listening on :${PORT}`);
 });
 
-// Global error handler to ensure JSON responses
+
+
+// Global error handler
 app.use((err, req, res, next) => {
     console.error('[SERVER] Global error:', err);
     res.status(500).json({ 
@@ -332,7 +337,7 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Catch-all route for undefined endpoints
+// Catch-all route (must be last)
 app.use('*', (req, res) => {
     console.log(`[SERVER] 404 for ${req.method} ${req.originalUrl}`);
     res.status(404).json({ 
@@ -341,5 +346,6 @@ app.use('*', (req, res) => {
         path: req.originalUrl
     });
 });
+
 
 
