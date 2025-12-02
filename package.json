@@ -9,7 +9,7 @@
     "prisma:generate": "prisma generate ",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate deploy",
-    "postinstall": "npm install"
+    
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
