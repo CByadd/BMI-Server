@@ -83,12 +83,25 @@ exports.getPlayer = async (req, res) => {
     try {
         const { screenId } = req.params;
         
-        const player = await prisma.adscapePlayer.findUnique({
-            where: { screenId: String(screenId) }
-        });
-        
-        if (!player) {
-            return res.status(404).json({ error: 'Player not found' });
+        // Use raw SQL to fetch player to avoid Prisma error if heightCalibration column doesn't exist
+        let player;
+        try {
+            const playerResult = await prisma.$queryRaw`
+                SELECT * FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+            `;
+            if (playerResult && playerResult.length > 0) {
+                player = playerResult[0];
+            } else {
+                return res.status(404).json({ error: 'Player not found' });
+            }
+        } catch (e) {
+            // Fallback to Prisma if raw SQL fails
+            player = await prisma.adscapePlayer.findUnique({
+                where: { screenId: String(screenId) }
+            });
+            if (!player) {
+                return res.status(404).json({ error: 'Player not found' });
+            }
         }
         
         // Get current playlist assignment with date range
@@ -112,6 +125,20 @@ exports.getPlayer = async (req, res) => {
         const formattedStartDate = playlistStartDate ? new Date(playlistStartDate).toISOString() : null;
         const formattedEndDate = playlistEndDate ? new Date(playlistEndDate).toISOString() : null;
         
+        // Try to get heightCalibration using raw SQL (column might not exist yet)
+        let heightCalibration = 0;
+        try {
+            const calibrationResult = await prisma.$queryRaw`
+                SELECT "heightCalibration" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+            `;
+            if (calibrationResult && calibrationResult.length > 0 && calibrationResult[0].heightCalibration !== null && calibrationResult[0].heightCalibration !== undefined) {
+                heightCalibration = calibrationResult[0].heightCalibration;
+            }
+        } catch (e) {
+            // Column doesn't exist yet, use default 0
+            console.log('[ADSCAPE] heightCalibration column does not exist yet, using default 0');
+        }
+        
         return res.json({
             ok: true,
             player: {
@@ -125,7 +152,7 @@ exports.getPlayer = async (req, res) => {
                 location: player.location,
                 osVersion: player.osVersion,
                 appVersionCode: player.appVersionCode,
-                heightCalibration: player.heightCalibration,
+                heightCalibration: heightCalibration,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 isEnabled: player.isActive, // Also include isEnabled for Android app compatibility
@@ -153,10 +180,67 @@ exports.getAllPlayers = async (req, res) => {
             ? {}
             : { screenId: { in: req.user.assignedScreenIds } };
         
-        const players = await prisma.adscapePlayer.findMany({
-            where: whereClause,
-            orderBy: { createdAt: 'desc' }
-        });
+        // Try to get players with heightCalibration using raw SQL, fallback if column doesn't exist
+        let players;
+        try {
+            if (req.user.role === 'super_admin') {
+                players = await prisma.$queryRaw`
+                    SELECT 
+                        id, "screenId", "appVersion", "flowType", "deviceName", 
+                        "screenWidth", "screenHeight", "ipAddress", location, 
+                        "osVersion", "lastSeen", "isActive", "createdAt",
+                        COALESCE("heightCalibration", 0) as "heightCalibration"
+                    FROM "AdscapePlayer"
+                    ORDER BY "createdAt" DESC
+                `;
+            } else {
+                const screenIds = req.user.assignedScreenIds;
+                if (screenIds.length === 0) {
+                    players = [];
+                } else {
+                    players = await prisma.$queryRaw`
+                        SELECT 
+                            id, "screenId", "appVersion", "flowType", "deviceName", 
+                            "screenWidth", "screenHeight", "ipAddress", location, 
+                            "osVersion", "lastSeen", "isActive", "createdAt",
+                            COALESCE("heightCalibration", 0) as "heightCalibration"
+                        FROM "AdscapePlayer"
+                        WHERE "screenId" = ANY(${screenIds})
+                        ORDER BY "createdAt" DESC
+                    `;
+                }
+            }
+        } catch (e) {
+            // Column doesn't exist yet, use raw SQL without heightCalibration
+            console.log('[ADSCAPE] heightCalibration column does not exist, fetching without it');
+            if (req.user.role === 'super_admin') {
+                const rawPlayers = await prisma.$queryRaw`
+                    SELECT 
+                        id, "screenId", "appVersion", "flowType", "deviceName", 
+                        "screenWidth", "screenHeight", "ipAddress", location, 
+                        "osVersion", "lastSeen", "isActive", "createdAt"
+                    FROM "AdscapePlayer"
+                    ORDER BY "createdAt" DESC
+                `;
+                players = rawPlayers.map(p => ({ ...p, heightCalibration: 0 }));
+            } else {
+                const screenIds = req.user.assignedScreenIds;
+                if (screenIds.length === 0) {
+                    players = [];
+                } else {
+                    const rawPlayers = await prisma.$queryRaw`
+                        SELECT 
+                            id, "screenId", "appVersion", "flowType", "deviceName", 
+                            "screenWidth", "screenHeight", "ipAddress", location, 
+                            "osVersion", "lastSeen", "isActive", "createdAt"
+                        FROM "AdscapePlayer"
+                        WHERE "screenId" = ANY(${screenIds})
+                        ORDER BY "createdAt" DESC
+                    `;
+                    players = rawPlayers.map(p => ({ ...p, heightCalibration: 0 }));
+                }
+            }
+        }
         
         return res.json({
             ok: true,
@@ -171,7 +255,7 @@ exports.getAllPlayers = async (req, res) => {
                 ipAddress: player.ipAddress,
                 location: player.location,
                 osVersion: player.osVersion,
-                heightCalibration: player.heightCalibration,
+                heightCalibration: player.heightCalibration ?? 0,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 createdAt: player.createdAt
@@ -390,23 +474,63 @@ exports.updateScreenConfig = async (req, res, io) => {
                         data: prismaUpdateData
                     });
                 } else {
-                    // Only heightCalibration to update, fetch player first
+                    // Only heightCalibration to update, fetch player first using raw SQL
+                    try {
+                        const playerResult = await prisma.$queryRaw`
+                            SELECT * FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+                        `;
+                        if (playerResult && playerResult.length > 0) {
+                            player = playerResult[0];
+                        }
+                    } catch (e) {
+                        // Fallback to Prisma
+                        player = await prisma.adscapePlayer.findUnique({
+                            where: { screenId: String(screenId) }
+                        });
+                    }
+                }
+                
+                // Update heightCalibration using raw SQL
+                // First check if column exists, if not create it
+                try {
+                    await prisma.$executeRaw`
+                        UPDATE "AdscapePlayer"
+                        SET "heightCalibration" = ${heightCalibrationValue}
+                        WHERE "screenId" = ${String(screenId)}
+                    `;
+                } catch (e) {
+                    // Column doesn't exist, create it first
+                    if (e.code === '42703' || e.message?.includes('does not exist')) {
+                        console.log('[ADSCAPE] heightCalibration column does not exist, creating it...');
+                        await prisma.$executeRawUnsafe(`
+                            ALTER TABLE "AdscapePlayer" 
+                            ADD COLUMN IF NOT EXISTS "heightCalibration" DOUBLE PRECISION DEFAULT 0
+                        `);
+                        // Now update it
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "heightCalibration" = ${heightCalibrationValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } else {
+                        throw e;
+                    }
+                }
+                
+                // Fetch updated player using raw SQL to avoid Prisma error
+                try {
+                    const playerResult = await prisma.$queryRaw`
+                        SELECT * FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+                    `;
+                    if (playerResult && playerResult.length > 0) {
+                        player = playerResult[0];
+                    }
+                } catch (e) {
+                    // Fallback to Prisma
                     player = await prisma.adscapePlayer.findUnique({
                         where: { screenId: String(screenId) }
                     });
                 }
-                
-                // Update heightCalibration using raw SQL
-                await prisma.$executeRaw`
-                    UPDATE "AdscapePlayer"
-                    SET "heightCalibration" = ${heightCalibrationValue}
-                    WHERE "screenId" = ${String(screenId)}
-                `;
-                
-                // Fetch updated player
-                player = await prisma.adscapePlayer.findUnique({
-                    where: { screenId: String(screenId) }
-                });
             } else {
                 // No heightCalibration, use normal Prisma update
                 player = await prisma.adscapePlayer.update({
