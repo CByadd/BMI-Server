@@ -125,7 +125,7 @@ exports.getPlayer = async (req, res) => {
                 location: player.location,
                 osVersion: player.osVersion,
                 appVersionCode: player.appVersionCode,
-                heightCalibration: player.heightCalibration ?? 0,
+                heightCalibration: player.heightCalibration,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 isEnabled: player.isActive, // Also include isEnabled for Android app compatibility
@@ -171,7 +171,7 @@ exports.getAllPlayers = async (req, res) => {
                 ipAddress: player.ipAddress,
                 location: player.location,
                 osVersion: player.osVersion,
-                heightCalibration: player.heightCalibration ?? 0,
+                heightCalibration: player.heightCalibration,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 createdAt: player.createdAt
@@ -355,7 +355,8 @@ exports.updateScreenConfig = async (req, res, io) => {
         }
         
         if (heightCalibration !== undefined) {
-            updateData.heightCalibration = heightCalibration !== null && heightCalibration !== undefined ? Number(heightCalibration) : 0;
+            // Allow null to clear the calibration (will use default 0 from database)
+            updateData.heightCalibration = heightCalibration === null || heightCalibration === undefined ? null : Number(heightCalibration);
         }
         
         if (Object.keys(updateData).length === 0 && playlistId === undefined) {
