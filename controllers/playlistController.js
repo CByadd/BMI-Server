@@ -121,7 +121,7 @@ exports.getPlaylistById = async (req, res) => {
 };
 
 // Create playlist
-exports.createPlaylist = async (req, res) => {
+exports.createPlaylist = async (req, res, io) => {
   try {
     const { name, description, tags, slots } = req.body;
     const adminId = req.user?.id;
@@ -188,7 +188,7 @@ exports.createPlaylist = async (req, res) => {
 };
 
 // Update playlist
-exports.updatePlaylist = async (req, res) => {
+exports.updatePlaylist = async (req, res, io) => {
   try {
     const { id } = req.params;
     const { name, description, tags, slots } = req.body;
@@ -271,6 +271,41 @@ exports.updatePlaylist = async (req, res) => {
 
     const playlistSlots = playlist.slots ? JSON.parse(playlist.slots) : [];
     const playlistTags = playlist.tags ? (typeof playlist.tags === 'string' ? JSON.parse(playlist.tags) : playlist.tags) : [];
+
+    // Find all screens using this playlist and notify them to refresh
+    if (io) {
+      try {
+        const screensUsingPlaylist = await prisma.$queryRaw`
+          SELECT screen_id, playlist_id, start_date, end_date 
+          FROM screen_playlists 
+          WHERE playlist_id = ${String(id)}
+        `;
+        
+        if (screensUsingPlaylist && screensUsingPlaylist.length > 0) {
+          console.log(`[PLAYLIST] Notifying ${screensUsingPlaylist.length} screen(s) about playlist update: ${id}`);
+          
+          for (const screen of screensUsingPlaylist) {
+            const screenId = screen.screen_id;
+            const formattedStartDate = screen.start_date ? new Date(screen.start_date).toISOString() : null;
+            const formattedEndDate = screen.end_date ? new Date(screen.end_date).toISOString() : null;
+            
+            // Emit playlist-content-changed event to trigger immediate refresh
+            io.to(`screen:${screenId}`).emit('playlist-content-changed', {
+              playlistId: id,
+              screenId: screenId,
+              playlistStartDate: formattedStartDate,
+              playlistEndDate: formattedEndDate,
+              reason: 'playlist_content_updated'
+            });
+            
+            console.log(`[PLAYLIST] Emitted playlist-content-changed to screen: ${screenId}`);
+          }
+        }
+      } catch (e) {
+        console.error('[PLAYLIST] Error notifying screens about playlist update:', e);
+        // Don't fail the request if notification fails
+      }
+    }
 
     res.json({
       ok: true,
