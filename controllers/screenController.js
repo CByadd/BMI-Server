@@ -355,8 +355,16 @@ exports.updateScreenConfig = async (req, res, io) => {
         }
         
         if (heightCalibration !== undefined) {
-            // Allow null to clear the calibration (will use default 0 from database)
-            updateData.heightCalibration = heightCalibration === null || heightCalibration === undefined ? null : Number(heightCalibration);
+            // Allow null or empty string to clear the calibration (will use default 0 from database)
+            if (heightCalibration === null || heightCalibration === undefined || heightCalibration === "") {
+                updateData.heightCalibration = 0; // Use 0 instead of null since schema has @default(0)
+            } else {
+                const numValue = Number(heightCalibration);
+                if (isNaN(numValue)) {
+                    return res.status(400).json({ error: 'heightCalibration must be a valid number' });
+                }
+                updateData.heightCalibration = numValue;
+            }
         }
         
         if (Object.keys(updateData).length === 0 && playlistId === undefined) {
@@ -366,10 +374,46 @@ exports.updateScreenConfig = async (req, res, io) => {
         // Update player config
         let player = null;
         if (Object.keys(updateData).length > 0) {
-            player = await prisma.adscapePlayer.update({
-                where: { screenId: String(screenId) },
-                data: updateData
-            });
+            // Check if heightCalibration is in updateData - if so, use raw SQL to update it
+            // (This is a workaround until Prisma client is regenerated on Vercel)
+            const hasHeightCalibration = 'heightCalibration' in updateData;
+            const heightCalibrationValue = updateData.heightCalibration;
+            
+            if (hasHeightCalibration) {
+                // Remove heightCalibration from updateData for Prisma update
+                const { heightCalibration, ...prismaUpdateData } = updateData;
+                
+                // Update other fields with Prisma if there are any
+                if (Object.keys(prismaUpdateData).length > 0) {
+                    player = await prisma.adscapePlayer.update({
+                        where: { screenId: String(screenId) },
+                        data: prismaUpdateData
+                    });
+                } else {
+                    // Only heightCalibration to update, fetch player first
+                    player = await prisma.adscapePlayer.findUnique({
+                        where: { screenId: String(screenId) }
+                    });
+                }
+                
+                // Update heightCalibration using raw SQL
+                await prisma.$executeRaw`
+                    UPDATE "AdscapePlayer"
+                    SET "heightCalibration" = ${heightCalibrationValue}
+                    WHERE "screenId" = ${String(screenId)}
+                `;
+                
+                // Fetch updated player
+                player = await prisma.adscapePlayer.findUnique({
+                    where: { screenId: String(screenId) }
+                });
+            } else {
+                // No heightCalibration, use normal Prisma update
+                player = await prisma.adscapePlayer.update({
+                    where: { screenId: String(screenId) },
+                    data: updateData
+                });
+            }
         } else {
             player = await prisma.adscapePlayer.findUnique({
                 where: { screenId: String(screenId) }
