@@ -820,6 +820,23 @@ exports.updateScreenConfig = async (req, res, io) => {
             });
         }
         
+        // Get heightCalibration from player (it might be updated via raw SQL)
+        let heightCalibrationValue = 0;
+        try {
+            const heightCalResult = await prisma.$queryRaw`
+                SELECT COALESCE("heightCalibration", 0) as "heightCalibration" 
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
+            `;
+            if (heightCalResult && heightCalResult.length > 0) {
+                heightCalibrationValue = Number(heightCalResult[0].heightCalibration) || 0;
+            }
+        } catch (e) {
+            // Column doesn't exist, use default 0
+            heightCalibrationValue = 0;
+        }
+        
         return res.json({
             ok: true,
             player: {
@@ -829,6 +846,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                 isEnabled: player.isActive, // Also include isEnabled for Android app compatibility
                 deviceName: player.deviceName,
                 location: player.location,
+                heightCalibration: heightCalibrationValue,
                 playlistId: currentPlaylistId,
                 playlistStartDate: formattedStartDate,
                 playlistEndDate: formattedEndDate
