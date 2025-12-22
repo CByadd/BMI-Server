@@ -12,6 +12,7 @@ router.get('/admin/bmi-stats', authenticateToken, adminController.getBMIStats);
 router.get('/admin/user-activity', authenticateToken, adminController.getUserActivity);
 router.get('/admin/weight-classification', authenticateToken, adminController.getWeightClassification);
 router.get('/admin/users', authenticateToken, adminController.getAllUsers);
+router.get('/admin/screen/:screenId/bmi-records', authenticateToken, adminController.getScreenBMIRecords);
 
 module.exports = router;
 

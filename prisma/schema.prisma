@@ -25,6 +25,7 @@ model AdscapePlayer {
   location    String?  @db.VarChar(255)
   osVersion   String?  @db.VarChar(50)
   appVersionCode String? @db.VarChar(20)
+  heightCalibration Float? @default(0) // Height calibration offset in cm (added/subtracted from sensor reading)
   lastSeen    DateTime @default(now())
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())

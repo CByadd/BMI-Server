@@ -353,5 +353,132 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
+// GET BMI records for a specific screen
+exports.getScreenBMIRecords = async (req, res) => {
+  try {
+    console.log('[ADMIN] getScreenBMIRecords called:', req.params, req.query);
+    const { screenId } = req.params;
+    
+    if (!screenId) {
+      return res.status(400).json({ error: 'screenId is required' });
+    }
+    
+    // Check if user has access to this screen
+    if (req.user.role !== 'super_admin' && !req.user.assignedScreenIds.includes(screenId)) {
+      return res.status(403).json({ error: 'Access denied to this screen' });
+    }
+    
+    // Get date filter from query params
+    const { dateFilter = 'all', startDate, endDate } = req.query;
+    
+    // Date filter is no longer used for the main query
+    // but we'll keep it for the today's stats calculation
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+    
+    // Get pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    
+    // Get BMI records for this screen with pagination
+    const [bmiRecords, totalCount] = await Promise.all([
+      prisma.bMI.findMany({
+        where: {
+          screenId: String(screenId)
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              mobile: true
+            }
+          }
+        },
+        orderBy: {
+          timestamp: 'desc'
+        },
+        take: limit,
+        skip: skip
+      }),
+      prisma.bMI.count({
+        where: {
+          screenId: String(screenId)
+        }
+      })
+    ]);
+    
+    // Format response
+    const formattedRecords = bmiRecords.map(record => ({
+      id: record.id,
+      date: record.timestamp.toISOString(),
+      userName: record.user?.name || 'Anonymous',
+      mobile: record.user?.mobile || '-',
+      weight: record.weightKg,
+      height: record.heightCm,
+      bmi: record.bmi,
+      category: record.category,
+      location: record.location || '-',
+      waterIntake: null // Not stored in BMI table, can be calculated or added later
+    }));
+    
+    // Calculate stats
+    // Today's stats are still calculated using the date filter
+    
+    const todayRecords = await prisma.bMI.count({
+      where: {
+        screenId: String(screenId),
+        timestamp: {
+          gte: today,
+          lte: todayEnd
+        }
+      }
+    });
+    
+    const totalRecords = await prisma.bMI.count({
+      where: {
+        screenId: String(screenId)
+      }
+    });
+    
+    const avgBMIResult = await prisma.bMI.aggregate({
+      where: {
+        screenId: String(screenId),
+        timestamp: {
+          gte: today,
+          lte: todayEnd
+        }
+      },
+      _avg: {
+        bmi: true
+      }
+    });
+    
+    res.json({
+      ok: true,
+      records: formattedRecords,
+      pagination: {
+        total: totalCount,
+        page: page,
+        limit: limit,
+        totalPages: Math.ceil(totalCount / limit),
+        hasNextPage: (page * limit) < totalCount,
+        hasPreviousPage: page > 1
+      },
+      stats: {
+        todayUsers: todayRecords,
+        totalUsers: totalRecords,
+        avgBMI: avgBMIResult._avg.bmi ? parseFloat(avgBMIResult._avg.bmi.toFixed(1)) : 0
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching screen BMI records:', error);
+    res.status(500).json({ error: 'Failed to fetch BMI records' });
+  }
+};
+
 
 

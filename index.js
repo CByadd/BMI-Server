@@ -309,6 +309,7 @@ app.use('/api', require('./routes/authRoutes'));
 
 // Mount Admin Panel Routes
 app.use('/api', adminRoutes);
+console.log('[SERVER] Admin routes mounted at /api');
 app.use('/api', screenRoutes(io)); // Pass io for real-time updates
 app.use('/api/billboards', billboardRoutes);
 app.use('/api', campaignRoutes);

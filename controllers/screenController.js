@@ -125,6 +125,7 @@ exports.getPlayer = async (req, res) => {
                 location: player.location,
                 osVersion: player.osVersion,
                 appVersionCode: player.appVersionCode,
+                heightCalibration: player.heightCalibration ?? 0,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 isEnabled: player.isActive, // Also include isEnabled for Android app compatibility
@@ -170,6 +171,7 @@ exports.getAllPlayers = async (req, res) => {
                 ipAddress: player.ipAddress,
                 location: player.location,
                 osVersion: player.osVersion,
+                heightCalibration: player.heightCalibration ?? 0,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 createdAt: player.createdAt
@@ -323,7 +325,7 @@ exports.getPlayerByCode = async (req, res) => {
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, playlistId, playlistStartDate, playlistEndDate } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, playlistId, playlistStartDate, playlistEndDate } = req.body || {};
         
         console.log('[ADSCAPE] Update screen config request:', { 
             screenId, 
@@ -350,6 +352,10 @@ exports.updateScreenConfig = async (req, res, io) => {
         
         if (location !== undefined) {
             updateData.location = location ? String(location) : null;
+        }
+        
+        if (heightCalibration !== undefined) {
+            updateData.heightCalibration = heightCalibration !== null && heightCalibration !== undefined ? Number(heightCalibration) : 0;
         }
         
         if (Object.keys(updateData).length === 0 && playlistId === undefined) {
