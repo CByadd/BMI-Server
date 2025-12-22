@@ -6,8 +6,6 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "build": "prisma generate",
-    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate ",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate deploy"
