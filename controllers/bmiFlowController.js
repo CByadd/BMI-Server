@@ -2,10 +2,6 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
-const routeMobileService = require('../services/routeMobileService');
-
-// In-memory store for OTP sessions (in production, use Redis or database)
-const otpSessions = new Map(); // mobile -> { otp, timestamp, name }
 
 // In-memory store for BMI data
 const bmiStore = new Map(); // bmiId -> payload
@@ -253,131 +249,7 @@ exports.createBMI = async (req, res, io) => {
 };
 
 /**
- * POST /api/otp/generate -> { name, mobile } -> Generate and send OTP
- */
-exports.generateOTP = async (req, res) => {
-    try {
-        const { name, mobile } = req.body || {};
-        if (!name || !mobile) {
-            return res.status(400).json({ error: 'name and mobile are required' });
-        }
-        
-        // Validate mobile number format (basic validation)
-        const cleanMobile = mobile.replace(/[\s\+\-]/g, '');
-        if (cleanMobile.length < 10 || cleanMobile.length > 15) {
-            return res.status(400).json({ error: 'Invalid mobile number format' });
-        }
-        
-        console.log('[OTP] Generating OTP for:', { name, mobile: cleanMobile });
-        
-        // Generate OTP via Route Mobile
-        const result = await routeMobileService.generateOTP(cleanMobile);
-        
-        if (result.success) {
-            // Store OTP session (mobile -> { otp, name, timestamp })
-            otpSessions.set(cleanMobile, {
-                otp: result.otp,
-                name: String(name),
-                timestamp: Date.now(),
-            });
-            
-            // Clean up old sessions (older than 10 minutes)
-            const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
-            for (const [key, session] of otpSessions.entries()) {
-                if (session.timestamp < tenMinutesAgo) {
-                    otpSessions.delete(key);
-                }
-            }
-            
-            console.log('[OTP] OTP sent successfully to:', cleanMobile);
-            return res.json({ 
-                success: true, 
-                message: 'OTP sent successfully',
-                messageId: result.messageId 
-            });
-        } else {
-            console.error('[OTP] Failed to send OTP:', result.error);
-            return res.status(400).json({ 
-                error: result.error || 'Failed to send OTP' 
-            });
-        }
-    } catch (e) {
-        console.error('[OTP] Generate OTP error:', e);
-        return res.status(500).json({ error: 'Failed to generate OTP' });
-    }
-};
-
-/**
- * POST /api/otp/validate -> { mobile, otp } -> Validate OTP
- */
-exports.validateOTP = async (req, res) => {
-    try {
-        const { mobile, otp } = req.body || {};
-        if (!mobile || !otp) {
-            return res.status(400).json({ error: 'mobile and otp are required' });
-        }
-        
-        const cleanMobile = mobile.replace(/[\s\+\-]/g, '');
-        
-        // Check if OTP session exists
-        const session = otpSessions.get(cleanMobile);
-        if (!session) {
-            return res.status(400).json({ error: 'OTP session not found. Please request a new OTP.' });
-        }
-        
-        // Check if OTP has expired (5 minutes)
-        const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-        if (session.timestamp < fiveMinutesAgo) {
-            otpSessions.delete(cleanMobile);
-            return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
-        }
-        
-        // Validate OTP via Route Mobile API
-        const result = await routeMobileService.validateOTP(cleanMobile, otp);
-        
-        if (result.success) {
-            // OTP validated, create or find user
-            let user = await prisma.user.findFirst({
-                where: { mobile: cleanMobile }
-            });
-            
-            if (!user) {
-                user = await prisma.user.create({
-                    data: {
-                        name: session.name,
-                        mobile: cleanMobile
-                    }
-                });
-            }
-            
-            // Clean up OTP session
-            otpSessions.delete(cleanMobile);
-            
-            console.log('[OTP] OTP validated successfully for:', cleanMobile);
-            return res.json({ 
-                success: true,
-                message: 'OTP validated successfully',
-                user: {
-                    userId: user.id,
-                    name: user.name,
-                    mobile: user.mobile
-                }
-            });
-        } else {
-            console.error('[OTP] OTP validation failed:', result.error);
-            return res.status(400).json({ 
-                error: result.error || 'Invalid OTP' 
-            });
-        }
-    } catch (e) {
-        console.error('[OTP] Validate OTP error:', e);
-        return res.status(500).json({ error: 'Failed to validate OTP' });
-    }
-};
-
-/**
- * POST /api/user -> { name, mobile } -> create or find user (DEPRECATED - Use OTP flow instead)
- * This endpoint is kept for backward compatibility but should be replaced with OTP flow
+ * POST /api/user -> { name, mobile } -> create or find user
  */
 exports.createUser = async (req, res) => {
     try {

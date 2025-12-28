@@ -7,11 +7,7 @@ module.exports = (io) => {
     // POST /api/bmi -> Create BMI record
     router.post('/bmi', (req, res) => bmiFlowController.createBMI(req, res, io));
 
-    // OTP endpoints
-    router.post('/otp/generate', bmiFlowController.generateOTP);
-    router.post('/otp/validate', bmiFlowController.validateOTP);
-
-    // POST /api/user -> Create or find user (DEPRECATED - Use OTP flow)
+    // POST /api/user -> Create or find user
     router.post('/user', bmiFlowController.createUser);
 
     // POST /api/payment-success -> Link user to BMI and emit to Android
