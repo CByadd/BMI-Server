@@ -6,6 +6,7 @@ const axios = require('axios');
  */
 
 // Get configuration from environment variables
+// Note: On Vercel, ensure these are set in Environment Variables settings
 const OTP_API_BASE_URL = process.env.OTP_API_BASE_URL || '';
 const OTP_USERNAME = process.env.OTP_USERNAME || '';
 const OTP_PASSWORD = process.env.OTP_PASSWORD || '';
@@ -13,6 +14,18 @@ const OTP_SOURCE = process.env.OTP_SOURCE || '';
 const OTP_LENGTH = parseInt(process.env.OTP_LENGTH || '6', 10);
 const OTP_EXPIRY = parseInt(process.env.OTP_EXPIRY || '300', 10); // Default 5 minutes
 const OTP_MESSAGE_TEMPLATE = process.env.OTP_MESSAGE_TEMPLATE || 'Your OTP is %m. Valid for 5 minutes.';
+
+// Log configuration on module load (without sensitive data)
+console.log('[OTP] Service initialized:', {
+  hasBaseUrl: !!OTP_API_BASE_URL,
+  baseUrl: OTP_API_BASE_URL,
+  hasUsername: !!OTP_USERNAME,
+  hasPassword: !!OTP_PASSWORD,
+  hasSource: !!OTP_SOURCE,
+  otplen: OTP_LENGTH,
+  exptime: OTP_EXPIRY,
+  messageTemplate: OTP_MESSAGE_TEMPLATE
+});
 
 /**
  * Generate and send OTP to mobile number
@@ -67,19 +80,65 @@ async function generateOTP(msisdn, tagname = '') {
     console.log('[OTP] Message template:', OTP_MESSAGE_TEMPLATE);
     console.log('[OTP] Encoded message:', encodedMessage);
 
+    // Validate all required parameters
+    const params = {
+      username: OTP_USERNAME,
+      password: OTP_PASSWORD,
+      msisdn: cleanMsisdn,
+      msg: encodedMessage,
+      source: OTP_SOURCE,
+      otplen: OTP_LENGTH.toString(),
+      exptime: OTP_EXPIRY.toString()
+    };
+
+    // Check for missing parameters
+    const missingParams = [];
+    for (const [key, value] of Object.entries(params)) {
+      if (!value || value === '') {
+        missingParams.push(key);
+      }
+    }
+
+    if (missingParams.length > 0) {
+      console.error('[OTP] Missing parameters:', missingParams);
+      return {
+        success: false,
+        error: `Missing required parameters: ${missingParams.join(', ')}`,
+        errorCode: 'MISSING_PARAMS'
+      };
+    }
+
+    // Validate otplen is numeric
+    if (isNaN(OTP_LENGTH) || OTP_LENGTH < 4 || OTP_LENGTH > 10) {
+      return {
+        success: false,
+        error: 'OTP length must be a number between 4 and 10',
+        errorCode: 'INVALID_OTP_LENGTH'
+      };
+    }
+
+    // Validate exptime is numeric
+    if (isNaN(OTP_EXPIRY) || OTP_EXPIRY < 60) {
+      return {
+        success: false,
+        error: 'OTP expiry must be a number (minimum 60 seconds)',
+        errorCode: 'INVALID_EXPIRY'
+      };
+    }
+
     // Build the API URL
     const apiUrl = `${OTP_API_BASE_URL}/OtpApi/otpgenerate`;
     
     // Build query parameters manually to preserve %m
     // URLSearchParams would encode %m to %25m, so we build the query string manually
     const queryParams = [
-      `username=${encodeURIComponent(OTP_USERNAME)}`,
-      `password=${encodeURIComponent(OTP_PASSWORD)}`,
-      `msisdn=${encodeURIComponent(cleanMsisdn)}`,
-      `msg=${encodedMessage}`, // Already encoded with %m preserved
-      `source=${encodeURIComponent(OTP_SOURCE)}`,
-      `otplen=${OTP_LENGTH}`,
-      `exptime=${OTP_EXPIRY}`
+      `username=${encodeURIComponent(params.username)}`,
+      `password=${encodeURIComponent(params.password)}`,
+      `msisdn=${encodeURIComponent(params.msisdn)}`,
+      `msg=${params.msg}`, // Already encoded with %m preserved
+      `source=${encodeURIComponent(params.source)}`,
+      `otplen=${params.otplen}`,
+      `exptime=${params.exptime}`
     ];
     
     if (tagname) {
@@ -88,12 +147,16 @@ async function generateOTP(msisdn, tagname = '') {
 
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
 
-    console.log('[OTP] Sending OTP request:', {
-      url: apiUrl,
-      msisdn: cleanMsisdn,
-      otplen: OTP_LENGTH,
-      exptime: OTP_EXPIRY
+    console.log('[OTP] Configuration check:', {
+      hasBaseUrl: !!OTP_API_BASE_URL,
+      hasUsername: !!OTP_USERNAME,
+      hasPassword: !!OTP_PASSWORD,
+      hasSource: !!OTP_SOURCE,
+      otplen: params.otplen,
+      exptime: params.exptime,
+      msisdn: cleanMsisdn
     });
+    console.log('[OTP] Full URL (password hidden):', fullUrl.replace(/password=[^&]*/, 'password=***'));
 
     // Make API request
     const response = await axios.get(fullUrl, {

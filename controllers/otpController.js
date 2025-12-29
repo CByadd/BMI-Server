@@ -18,6 +18,40 @@ const generateToken = (user) => {
 };
 
 /**
+ * Check OTP configuration (for debugging)
+ * GET /api/otp/config
+ */
+exports.checkConfig = async (req, res) => {
+  try {
+    const config = {
+      hasBaseUrl: !!process.env.OTP_API_BASE_URL,
+      baseUrl: process.env.OTP_API_BASE_URL || 'NOT SET',
+      hasUsername: !!process.env.OTP_USERNAME,
+      username: process.env.OTP_USERNAME ? 'SET' : 'NOT SET',
+      hasPassword: !!process.env.OTP_PASSWORD,
+      password: process.env.OTP_PASSWORD ? 'SET' : 'NOT SET',
+      hasSource: !!process.env.OTP_SOURCE,
+      source: process.env.OTP_SOURCE || 'NOT SET',
+      otplen: process.env.OTP_LENGTH || 'NOT SET',
+      exptime: process.env.OTP_EXPIRY || 'NOT SET',
+      messageTemplate: process.env.OTP_MESSAGE_TEMPLATE || 'NOT SET'
+    };
+
+    res.json({
+      success: true,
+      config: config,
+      allConfigured: config.hasBaseUrl && config.hasUsername && config.hasPassword && config.hasSource
+    });
+  } catch (error) {
+    console.error('Check config error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to check configuration' 
+    });
+  }
+};
+
+/**
  * Generate and send OTP
  * POST /api/otp/generate
  * Body: { mobile: string }
