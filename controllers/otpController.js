@@ -108,6 +108,14 @@ exports.testSMS = async (req, res) => {
       `message=${encodedMessage}`
     ];
     
+    // Add DLT parameters if configured (Required for India commercial SMS)
+    const OTP_ENTITY_ID = process.env.OTP_ENTITY_ID || '';
+    const OTP_TEMPLATE_ID = process.env.OTP_TEMPLATE_ID || '';
+    if (OTP_ENTITY_ID && OTP_TEMPLATE_ID) {
+      queryParams.push(`entityid=${encodeURIComponent(OTP_ENTITY_ID)}`);
+      queryParams.push(`tempid=${encodeURIComponent(OTP_TEMPLATE_ID)}`);
+    }
+    
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
 
     console.log('[TEST SMS] Sending test message:', {

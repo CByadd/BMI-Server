@@ -13,6 +13,9 @@ const SMS_SOURCE = process.env.OTP_SOURCE || '';
 const OTP_LENGTH = parseInt(process.env.OTP_LENGTH || '6', 10);
 const OTP_EXPIRY = parseInt(process.env.OTP_EXPIRY || '300', 10); // Default 5 minutes
 const OTP_MESSAGE_TEMPLATE = process.env.OTP_MESSAGE_TEMPLATE || 'Your OTP is %m. Valid for 5 minutes.';
+// DLT Registration (Required for India commercial SMS)
+const OTP_ENTITY_ID = process.env.OTP_ENTITY_ID || '';
+const OTP_TEMPLATE_ID = process.env.OTP_TEMPLATE_ID || '';
 
 // In-memory OTP store: mobile -> { otp, expiresAt, attempts }
 const otpStore = new Map();
@@ -125,6 +128,17 @@ async function generateOTP(msisdn) {
       `source=${encodeURIComponent(SMS_SOURCE)}`, // Sender ID
       `message=${encodedMessage}` // URL encoded message (urlencode in PHP = encodeURIComponent in JS)
     ];
+    
+    // Add DLT parameters if configured (Required for India commercial SMS)
+    // These are required for DLT registered templates in India
+    if (OTP_ENTITY_ID && OTP_TEMPLATE_ID) {
+      queryParams.push(`entityid=${encodeURIComponent(OTP_ENTITY_ID)}`);
+      queryParams.push(`tempid=${encodeURIComponent(OTP_TEMPLATE_ID)}`);
+      console.log('[OTP] Using DLT registration:', {
+        entityId: OTP_ENTITY_ID,
+        templateId: OTP_TEMPLATE_ID
+      });
+    }
 
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
 
