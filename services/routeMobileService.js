@@ -68,7 +68,13 @@ async function generateOTP(msisdn) {
     }
 
     // Validate mobile number (should be 10 digits)
-    const cleanMsisdn = msisdn.replace(/\D/g, ''); // Remove non-digits
+    let cleanMsisdn = msisdn.replace(/\D/g, ''); // Remove non-digits
+    
+    // Remove country code if present (91 for India)
+    if (cleanMsisdn.startsWith('91') && cleanMsisdn.length === 12) {
+      cleanMsisdn = cleanMsisdn.substring(2);
+    }
+    
     if (cleanMsisdn.length !== 10) {
       return {
         success: false,
@@ -76,6 +82,10 @@ async function generateOTP(msisdn) {
         errorCode: 'INVALID_MSISDN'
       };
     }
+    
+    // Add country code 91 (India) for Route Mobile API
+    // Some carriers require country code prefix
+    const destinationWithCountryCode = `91${cleanMsisdn}`;
 
     // Generate OTP
     const otp = generateRandomOTP(OTP_LENGTH);
@@ -92,7 +102,8 @@ async function generateOTP(msisdn) {
     // Create message with OTP
     const message = OTP_MESSAGE_TEMPLATE.replace('%m', otp);
 
-    // URL encode the message (UTF-8 encoding) - as per Route Mobile documentation
+    // URL encode the message (UTF-8 encoding) - exactly like PHP urlencode()
+    // encodeURIComponent is JavaScript equivalent of PHP urlencode()
     const encodedMessage = encodeURIComponent(message);
 
     // Build the Bulk SMS API URL
@@ -101,17 +112,18 @@ async function generateOTP(msisdn) {
     const baseUrl = SMS_API_BASE_URL.replace(/\/$/, '');
     const apiUrl = `${baseUrl}/bulksms/bulksms`;
     
-    // Build query parameters exactly as per Route Mobile documentation
-    // Note: All parameters should be URL encoded, destination can be with or without + sign
-    // For Indian numbers, we use 10 digits without country code or + sign
+    // Build query parameters exactly as per Route Mobile PHP example
+    // Format matches: http://host:port/bulksms/bulksms?username=...&password=...&type=...&dlr=...&destination=...&source=...&message=...
+    // All parameters are URL encoded (JavaScript encodeURIComponent = PHP urlencode)
+    // Using destination with country code (91 for India) as some carriers require it
     const queryParams = [
       `username=${encodeURIComponent(SMS_USERNAME)}`,
       `password=${encodeURIComponent(SMS_PASSWORD)}`,
-      `type=0`, // Plain text (GSM 3.38 Character encoding)
-      `dlr=0`, // No delivery report required (can be 1 for delivery report)
-      `destination=${encodeURIComponent(cleanMsisdn)}`, // 10 digit number without + sign
-      `source=${encodeURIComponent(SMS_SOURCE)}`,
-      `message=${encodedMessage}` // URL encoded message
+      `type=0`, // Plain text (GSM 3.38 Character encoding) - same as PHP type=0
+      `dlr=0`, // No delivery report required (0 = not required, 1 = required)
+      `destination=${encodeURIComponent(destinationWithCountryCode)}`, // 12 digits with country code (91 + 10 digits)
+      `source=${encodeURIComponent(SMS_SOURCE)}`, // Sender ID
+      `message=${encodedMessage}` // URL encoded message (urlencode in PHP = encodeURIComponent in JS)
     ];
 
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
@@ -119,6 +131,7 @@ async function generateOTP(msisdn) {
     console.log('[OTP] Sending SMS:', {
       url: apiUrl,
       msisdn: cleanMsisdn,
+      destination: destinationWithCountryCode, // With country code
       message: message, // Log original message
       messageLength: message.length,
       otpLength: otp.length,

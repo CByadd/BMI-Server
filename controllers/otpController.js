@@ -1,6 +1,7 @@
 const { generateOTP, validateOTP } = require('../services/routeMobileService');
 const prisma = require('../db');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '60d';
@@ -52,14 +53,18 @@ exports.checkConfig = async (req, res) => {
 };
 
 /**
- * Test SMS sending (for debugging)
+ * Test SMS sending directly (for debugging)
  * POST /api/otp/test
- * Body: { mobile: string }
+ * Body: { mobile: string, message?: string }
  */
 exports.testSMS = async (req, res) => {
   try {
-    const { generateOTP } = require('../services/routeMobileService');
-    const { mobile } = req.body;
+    const SMS_API_BASE_URL = process.env.OTP_API_BASE_URL || 'http://sms6.rmlconnect.net:8080';
+    const SMS_USERNAME = process.env.OTP_USERNAME || '';
+    const SMS_PASSWORD = process.env.OTP_PASSWORD || '';
+    const SMS_SOURCE = process.env.OTP_SOURCE || '';
+    
+    const { mobile, message: customMessage } = req.body;
 
     if (!mobile) {
       return res.status(400).json({ 
@@ -68,7 +73,13 @@ exports.testSMS = async (req, res) => {
       });
     }
 
-    const cleanMobile = mobile.replace(/\D/g, '');
+    let cleanMobile = mobile.replace(/\D/g, '');
+    
+    // Remove country code if present (91 for India)
+    if (cleanMobile.startsWith('91') && cleanMobile.length === 12) {
+      cleanMobile = cleanMobile.substring(2);
+    }
+    
     if (cleanMobile.length !== 10) {
       return res.status(400).json({ 
         success: false,
@@ -76,8 +87,88 @@ exports.testSMS = async (req, res) => {
       });
     }
 
-    const result = await generateOTP(cleanMobile);
-    res.json(result);
+    // Add country code 91 (India) for Route Mobile API
+    const destinationWithCountryCode = `91${cleanMobile}`;
+
+    // Use custom message or default test message
+    const message = customMessage || 'Test SMS from Well2Day API. Please ignore.';
+    const encodedMessage = encodeURIComponent(message);
+
+    // Build URL exactly like PHP example
+    const baseUrl = SMS_API_BASE_URL.replace(/\/$/, '');
+    const apiUrl = `${baseUrl}/bulksms/bulksms`;
+    
+    const queryParams = [
+      `username=${encodeURIComponent(SMS_USERNAME)}`,
+      `password=${encodeURIComponent(SMS_PASSWORD)}`,
+      `type=0`, // Plain text
+      `dlr=0`, // No delivery report
+      `destination=${encodeURIComponent(destinationWithCountryCode)}`, // With country code
+      `source=${encodeURIComponent(SMS_SOURCE)}`,
+      `message=${encodedMessage}`
+    ];
+    
+    const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
+
+    console.log('[TEST SMS] Sending test message:', {
+      mobile: cleanMobile,
+      message: message,
+      url: fullUrl.replace(/password=[^&]*/, 'password=***')
+    });
+
+    try {
+      const response = await axios.get(fullUrl, {
+        timeout: 25000,
+        headers: {
+          'Accept': '*/*',
+          'User-Agent': 'Node.js/SMS-Test'
+        },
+        validateStatus: (status) => status >= 200 && status < 500
+      });
+
+      const responseText = (response.data?.toString() || response.data || '').trim();
+      
+      console.log('[TEST SMS] Response:', responseText);
+
+      if (responseText.startsWith('1701|')) {
+        const parts = responseText.split('|');
+        const cellAndId = parts[1] ? parts[1].split(':') : [];
+        
+        res.json({
+          success: true,
+          message: 'SMS sent successfully',
+          response: responseText,
+          messageId: cellAndId[1] || '',
+          cellNumber: cellAndId[0] || destinationWithCountryCode,
+          destinationUsed: destinationWithCountryCode,
+          note: 'SMS sent with country code (91). If still not received, check: 1) Sender ID approval, 2) DND status, 3) Account credits, 4) Network connectivity'
+        });
+      } else {
+        const errorMessages = {
+          '1702': 'Invalid URL or missing parameter',
+          '1703': 'Invalid username or password',
+          '1706': 'Invalid destination (mobile number)',
+          '1707': 'Invalid source (sender ID not approved)',
+          '1025': 'Insufficient credit',
+          '1032': 'DND reject (Do Not Disturb - number blocked)',
+          '1028': 'Spam message detected',
+          '1709': 'User validation failed'
+        };
+
+        res.status(400).json({
+          success: false,
+          error: errorMessages[responseText] || 'Unknown error',
+          errorCode: responseText,
+          note: 'Check Route Mobile account settings and sender ID approval'
+        });
+      }
+    } catch (error) {
+      console.error('[TEST SMS] Error:', error.message);
+      res.status(500).json({
+        success: false,
+        error: error.response ? error.response.data : error.message
+      });
+    }
   } catch (error) {
     console.error('Test SMS error:', error);
     res.status(500).json({ 
@@ -128,7 +219,8 @@ exports.generateOTP = async (req, res) => {
     res.json({
       success: true,
       message: 'OTP sent successfully',
-      messageId: result.messageId
+      messageId: result.messageId,
+      note: 'If OTP not received, please check your phone or try again after a few minutes'
     });
   } catch (error) {
     console.error('Generate OTP error:', error);
@@ -232,4 +324,3 @@ exports.verifyOTP = async (req, res) => {
     });
   }
 };
-
