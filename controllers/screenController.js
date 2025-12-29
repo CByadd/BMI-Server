@@ -125,18 +125,24 @@ exports.getPlayer = async (req, res) => {
         const formattedStartDate = playlistStartDate ? new Date(playlistStartDate).toISOString() : null;
         const formattedEndDate = playlistEndDate ? new Date(playlistEndDate).toISOString() : null;
         
-        // Try to get heightCalibration using raw SQL (column might not exist yet)
+        // Try to get heightCalibration and paymentAmount using raw SQL (columns might not exist yet)
         let heightCalibration = 0;
+        let paymentAmount = null;
         try {
-            const calibrationResult = await prisma.$queryRaw`
-                SELECT "heightCalibration" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+            const configResult = await prisma.$queryRaw`
+                SELECT "heightCalibration", "paymentAmount" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
             `;
-            if (calibrationResult && calibrationResult.length > 0 && calibrationResult[0].heightCalibration !== null && calibrationResult[0].heightCalibration !== undefined) {
-                heightCalibration = calibrationResult[0].heightCalibration;
+            if (configResult && configResult.length > 0) {
+                if (configResult[0].heightCalibration !== null && configResult[0].heightCalibration !== undefined) {
+                    heightCalibration = configResult[0].heightCalibration;
+                }
+                if (configResult[0].paymentAmount !== null && configResult[0].paymentAmount !== undefined) {
+                    paymentAmount = configResult[0].paymentAmount;
+                }
             }
         } catch (e) {
-            // Column doesn't exist yet, use default 0
-            console.log('[ADSCAPE] heightCalibration column does not exist yet, using default 0');
+            // Columns might not exist yet, use defaults
+            console.log('[ADSCAPE] Config columns might not exist yet, using defaults');
         }
         
         return res.json({
@@ -153,6 +159,7 @@ exports.getPlayer = async (req, res) => {
                 osVersion: player.osVersion,
                 appVersionCode: player.appVersionCode,
                 heightCalibration: heightCalibration,
+                paymentAmount: paymentAmount,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 isEnabled: player.isActive, // Also include isEnabled for Android app compatibility
@@ -409,7 +416,7 @@ exports.getPlayerByCode = async (req, res) => {
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, heightCalibration, playlistId, playlistStartDate, playlistEndDate } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, paymentAmount, playlistId, playlistStartDate, playlistEndDate } = req.body || {};
         
         console.log('[ADSCAPE] Update screen config request:', { 
             screenId, 
@@ -451,6 +458,19 @@ exports.updateScreenConfig = async (req, res, io) => {
             }
         }
         
+        if (paymentAmount !== undefined) {
+            // Allow null or empty string to clear the payment amount
+            if (paymentAmount === null || paymentAmount === undefined || paymentAmount === "") {
+                updateData.paymentAmount = null;
+            } else {
+                const numValue = Number(paymentAmount);
+                if (isNaN(numValue) || numValue < 0) {
+                    return res.status(400).json({ error: 'paymentAmount must be a valid positive number' });
+                }
+                updateData.paymentAmount = numValue;
+            }
+        }
+        
         if (Object.keys(updateData).length === 0 && playlistId === undefined) {
             return res.status(400).json({ error: 'At least one field required for update' });
         }
@@ -458,14 +478,16 @@ exports.updateScreenConfig = async (req, res, io) => {
         // Update player config
         let player = null;
         if (Object.keys(updateData).length > 0) {
-            // Check if heightCalibration is in updateData - if so, use raw SQL to update it
+            // Check if heightCalibration or paymentAmount is in updateData - if so, use raw SQL to update them
             // (This is a workaround until Prisma client is regenerated on Vercel)
             const hasHeightCalibration = 'heightCalibration' in updateData;
+            const hasPaymentAmount = 'paymentAmount' in updateData;
             const heightCalibrationValue = updateData.heightCalibration;
+            const paymentAmountValue = updateData.paymentAmount;
             
-            if (hasHeightCalibration) {
-                // Remove heightCalibration from updateData for Prisma update
-                const { heightCalibration, ...prismaUpdateData } = updateData;
+            if (hasHeightCalibration || hasPaymentAmount) {
+                // Remove heightCalibration and paymentAmount from updateData for Prisma update
+                const { heightCalibration, paymentAmount, ...prismaUpdateData } = updateData;
                 
                 // Update other fields with Prisma if there are any
                 if (Object.keys(prismaUpdateData).length > 0) {
@@ -490,30 +512,62 @@ exports.updateScreenConfig = async (req, res, io) => {
                     }
                 }
                 
-                // Update heightCalibration using raw SQL
-                // First check if column exists, if not create it
-                try {
-                    await prisma.$executeRaw`
-                        UPDATE "AdscapePlayer"
-                        SET "heightCalibration" = ${heightCalibrationValue}
-                        WHERE "screenId" = ${String(screenId)}
-                    `;
-                } catch (e) {
-                    // Column doesn't exist, create it first
-                    if (e.code === '42703' || e.message?.includes('does not exist')) {
-                        console.log('[ADSCAPE] heightCalibration column does not exist, creating it...');
-                        await prisma.$executeRawUnsafe(`
-                            ALTER TABLE "AdscapePlayer" 
-                            ADD COLUMN IF NOT EXISTS "heightCalibration" DOUBLE PRECISION DEFAULT 0
-                        `);
-                        // Now update it
+                // Update heightCalibration and paymentAmount using raw SQL
+                // First check if columns exist, if not create them
+                const updateFields = [];
+                const updateValues = [];
+                
+                if (hasHeightCalibration) {
+                    try {
                         await prisma.$executeRaw`
                             UPDATE "AdscapePlayer"
                             SET "heightCalibration" = ${heightCalibrationValue}
                             WHERE "screenId" = ${String(screenId)}
                         `;
-                    } else {
-                        throw e;
+                    } catch (e) {
+                        // Column doesn't exist, create it first
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            console.log('[ADSCAPE] heightCalibration column does not exist, creating it...');
+                            await prisma.$executeRawUnsafe(`
+                                ALTER TABLE "AdscapePlayer" 
+                                ADD COLUMN IF NOT EXISTS "heightCalibration" DOUBLE PRECISION DEFAULT 0
+                            `);
+                            // Now update it
+                            await prisma.$executeRaw`
+                                UPDATE "AdscapePlayer"
+                                SET "heightCalibration" = ${heightCalibrationValue}
+                                WHERE "screenId" = ${String(screenId)}
+                            `;
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+                
+                if (hasPaymentAmount) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "paymentAmount" = ${paymentAmountValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        // Column doesn't exist, create it first
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            console.log('[ADSCAPE] paymentAmount column does not exist, creating it...');
+                            await prisma.$executeRawUnsafe(`
+                                ALTER TABLE "AdscapePlayer" 
+                                ADD COLUMN IF NOT EXISTS "paymentAmount" DOUBLE PRECISION
+                            `);
+                            // Now update it
+                            await prisma.$executeRaw`
+                                UPDATE "AdscapePlayer"
+                                SET "paymentAmount" = ${paymentAmountValue}
+                                WHERE "screenId" = ${String(screenId)}
+                            `;
+                        } else {
+                            throw e;
+                        }
                     }
                 }
                 

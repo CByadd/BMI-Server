@@ -1,0 +1,165 @@
+const { generateOTP, validateOTP } = require('../services/routeMobileService');
+const prisma = require('../db');
+const jwt = require('jsonwebtoken');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '60d';
+
+// Helper function to generate JWT token
+const generateToken = (user) => {
+  return jwt.sign(
+    {
+      id: user.id,
+      mobile: user.mobile,
+    },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRY }
+  );
+};
+
+/**
+ * Generate and send OTP
+ * POST /api/otp/generate
+ * Body: { mobile: string }
+ */
+exports.generateOTP = async (req, res) => {
+  try {
+    const { mobile } = req.body;
+
+    if (!mobile) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Mobile number is required' 
+      });
+    }
+
+    // Clean mobile number (remove spaces, dashes, etc.)
+    const cleanMobile = mobile.replace(/\D/g, '');
+
+    // Validate mobile number format (should be 10 digits for India)
+    if (cleanMobile.length !== 10) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid mobile number. Must be 10 digits.' 
+      });
+    }
+
+    // Generate and send OTP
+    const result = await generateOTP(cleanMobile);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error,
+        errorCode: result.errorCode
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'OTP sent successfully',
+      messageId: result.messageId
+    });
+  } catch (error) {
+    console.error('Generate OTP error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to generate OTP' 
+    });
+  }
+};
+
+/**
+ * Validate OTP and login/register user
+ * POST /api/otp/verify
+ * Body: { mobile: string, otp: string, name?: string }
+ */
+exports.verifyOTP = async (req, res) => {
+  try {
+    const { mobile, otp, name } = req.body;
+
+    if (!mobile || !otp) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Mobile number and OTP are required' 
+      });
+    }
+
+    // Clean mobile number
+    const cleanMobile = mobile.replace(/\D/g, '');
+
+    // Validate mobile number format
+    if (cleanMobile.length !== 10) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid mobile number. Must be 10 digits.' 
+      });
+    }
+
+    // Validate OTP
+    const validationResult = await validateOTP(cleanMobile, otp);
+
+    if (!validationResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: validationResult.error,
+        errorCode: validationResult.errorCode
+      });
+    }
+
+    // OTP is valid, now handle user login/registration
+    try {
+      // Try to find existing user by mobile
+      let user = await prisma.user.findFirst({
+        where: { 
+          mobile: cleanMobile 
+        }
+      });
+
+      // If user doesn't exist and name is provided, create new user
+      if (!user && name) {
+        user = await prisma.user.create({
+          data: {
+            name: name.trim(),
+            mobile: cleanMobile
+          }
+        });
+      } else if (!user) {
+        // User doesn't exist and no name provided
+        return res.status(400).json({
+          success: false,
+          error: 'User not found. Please provide name for registration.'
+        });
+      }
+
+      // Generate JWT token
+      const token = generateToken(user);
+
+      // Return user data and token
+      res.json({
+        success: true,
+        message: 'OTP verified successfully',
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          mobile: user.mobile,
+          userId: user.id // For compatibility with existing client code
+        }
+      });
+    } catch (dbError) {
+      console.error('Database error during OTP verification:', dbError);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to process login'
+      });
+    }
+  } catch (error) {
+    console.error('Verify OTP error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to verify OTP' 
+    });
+  }
+};
+

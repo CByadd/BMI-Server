@@ -307,6 +307,9 @@ app.use('/api', bmiFlowRoutes(io));
 // Mount Auth Routes
 app.use('/api', require('./routes/authRoutes'));
 
+// Mount OTP Routes
+app.use('/api', require('./routes/otpRoutes'));
+
 // Mount Admin Panel Routes
 app.use('/api', adminRoutes);
 console.log('[SERVER] Admin routes mounted at /api');
@@ -319,6 +322,86 @@ app.use('/api/media', require('./routes/mediaRoutes'));
 app.use('/api', require('./routes/playlistRoutes')(io));
 app.use('/api', require('./routes/scheduleRoutes'));
 app.use('/api', require('./routes/defaultAssetRoutes'));
+
+// Asset Cleanup Service - Scheduled task
+const assetCleanupService = require('./services/assetCleanupService');
+
+// Run asset cleanup every 24 hours (86400000 ms)
+// Note: This cleans up assets on the server if stored there
+// For Android devices, they should call the cleanup API endpoint periodically
+const ASSET_CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
+
+// Initial cleanup on server start (after 1 minute delay)
+setTimeout(() => {
+    console.log('[ASSET_CLEANUP] Running initial asset cleanup check...');
+    // Note: This would need the actual path where assets are stored on the server
+    // For now, this is a placeholder - Android devices will handle their own cleanup
+}, 60000);
+
+// Periodic cleanup
+setInterval(() => {
+    console.log('[ASSET_CLEANUP] Running periodic asset cleanup...');
+    // Note: This would need the actual path where assets are stored on the server
+    // For now, this is a placeholder - Android devices will handle their own cleanup
+}, ASSET_CLEANUP_INTERVAL);
+
+// API endpoint for asset cleanup (can be called by Android devices or manually)
+app.post('/api/assets/cleanup', async (req, res) => {
+    try {
+        const { directoryPath, retentionDays } = req.body;
+        const retention = retentionDays || assetCleanupService.ASSET_RETENTION_DAYS;
+        
+        if (!directoryPath) {
+            return res.status(400).json({ 
+                error: 'directoryPath is required',
+                message: 'Provide the path to the directory containing assets to clean up'
+            });
+        }
+        
+        const results = await assetCleanupService.cleanupAssets(directoryPath, retention);
+        
+        res.json({
+            ok: true,
+            message: `Asset cleanup completed. Deleted: ${results.deleted}, Errors: ${results.errors}`,
+            results
+        });
+    } catch (error) {
+        console.error('[ASSET_CLEANUP] API error:', error);
+        res.status(500).json({ 
+            error: 'Asset cleanup failed',
+            message: error.message 
+        });
+    }
+});
+
+// API endpoint to get asset statistics
+app.get('/api/assets/stats', async (req, res) => {
+    try {
+        const { directoryPath, retentionDays } = req.query;
+        const retention = retentionDays ? parseInt(retentionDays, 10) : assetCleanupService.ASSET_RETENTION_DAYS;
+        
+        if (!directoryPath) {
+            return res.status(400).json({ 
+                error: 'directoryPath is required',
+                message: 'Provide the path to the directory containing assets'
+            });
+        }
+        
+        const stats = await assetCleanupService.getAssetStats(directoryPath, retention);
+        
+        res.json({
+            ok: true,
+            retentionDays: retention,
+            stats
+        });
+    } catch (error) {
+        console.error('[ASSET_CLEANUP] Stats API error:', error);
+        res.status(500).json({ 
+            error: 'Failed to get asset stats',
+            message: error.message 
+        });
+    }
+});
 
 
 const PORT = process.env.PORT || 4000;
