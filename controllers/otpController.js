@@ -52,6 +52,42 @@ exports.checkConfig = async (req, res) => {
 };
 
 /**
+ * Test SMS sending (for debugging)
+ * POST /api/otp/test
+ * Body: { mobile: string }
+ */
+exports.testSMS = async (req, res) => {
+  try {
+    const { generateOTP } = require('../services/routeMobileService');
+    const { mobile } = req.body;
+
+    if (!mobile) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Mobile number is required' 
+      });
+    }
+
+    const cleanMobile = mobile.replace(/\D/g, '');
+    if (cleanMobile.length !== 10) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid mobile number. Must be 10 digits.' 
+      });
+    }
+
+    const result = await generateOTP(cleanMobile);
+    res.json(result);
+  } catch (error) {
+    console.error('Test SMS error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to test SMS' 
+    });
+  }
+};
+
+/**
  * Generate and send OTP
  * POST /api/otp/generate
  * Body: { mobile: string }

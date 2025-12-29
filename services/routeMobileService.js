@@ -92,22 +92,26 @@ async function generateOTP(msisdn) {
     // Create message with OTP
     const message = OTP_MESSAGE_TEMPLATE.replace('%m', otp);
 
-    // URL encode the message (UTF-8 encoding)
+    // URL encode the message (UTF-8 encoding) - as per Route Mobile documentation
     const encodedMessage = encodeURIComponent(message);
 
     // Build the Bulk SMS API URL
     // Format: http://<server>:8080/bulksms/bulksms?username=XXXX&password=YYYYY&type=0&dlr=0&destination=QQQQQQQQQ&source=RRRR&message=SSSSSSSS
-    const apiUrl = `${SMS_API_BASE_URL}/bulksms/bulksms`;
+    // Ensure base URL doesn't have trailing slash
+    const baseUrl = SMS_API_BASE_URL.replace(/\/$/, '');
+    const apiUrl = `${baseUrl}/bulksms/bulksms`;
     
-    // Build query parameters
+    // Build query parameters exactly as per Route Mobile documentation
+    // Note: All parameters should be URL encoded, destination can be with or without + sign
+    // For Indian numbers, we use 10 digits without country code or + sign
     const queryParams = [
       `username=${encodeURIComponent(SMS_USERNAME)}`,
       `password=${encodeURIComponent(SMS_PASSWORD)}`,
       `type=0`, // Plain text (GSM 3.38 Character encoding)
-      `dlr=0`, // No delivery report required
-      `destination=${encodeURIComponent(cleanMsisdn)}`,
+      `dlr=0`, // No delivery report required (can be 1 for delivery report)
+      `destination=${encodeURIComponent(cleanMsisdn)}`, // 10 digit number without + sign
       `source=${encodeURIComponent(SMS_SOURCE)}`,
-      `message=${encodedMessage}`
+      `message=${encodedMessage}` // URL encoded message
     ];
 
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
@@ -115,30 +119,70 @@ async function generateOTP(msisdn) {
     console.log('[OTP] Sending SMS:', {
       url: apiUrl,
       msisdn: cleanMsisdn,
+      message: message, // Log original message
       messageLength: message.length,
-      otpLength: otp.length
+      otpLength: otp.length,
+      encodedMessage: encodedMessage
     });
     console.log('[OTP] Full URL (password hidden):', fullUrl.replace(/password=[^&]*/, 'password=***'));
 
-    // Make API request
-    const response = await axios.get(fullUrl, {
-      timeout: 15000 // 15 second timeout
-    });
+    // Make API request using GET method (as per Route Mobile documentation)
+    let response;
+    let responseText;
+    
+    try {
+      response = await axios.get(fullUrl, {
+        timeout: 25000, // 25 second timeout (as per Route Mobile example)
+        headers: {
+          'Accept': '*/*',
+          'User-Agent': 'Node.js/OTP-Service'
+        },
+        validateStatus: function (status) {
+          // Accept any status code as Route Mobile returns error codes in response body
+          return status >= 200 && status < 500;
+        }
+      });
 
-    const responseText = response.data?.toString().trim() || '';
-    console.log('[OTP] API Response:', responseText);
+      // Route Mobile API returns plain text response
+      responseText = (response.data?.toString() || response.data || '').trim();
+      console.log('[OTP] API Response:', responseText);
+      console.log('[OTP] Response Status:', response.status);
+      console.log('[OTP] Response Headers:', response.headers);
+    } catch (axiosError) {
+      // Handle axios errors
+      if (axiosError.response) {
+        responseText = (axiosError.response.data?.toString() || axiosError.response.data || '').trim();
+        console.error('[OTP] API Error Response:', responseText);
+        console.error('[OTP] API Error Status:', axiosError.response.status);
+      } else {
+        throw axiosError; // Re-throw if not a response error
+      }
+    }
 
     // Parse response
-    // Success format: "1701|<CELL_NO>|<MESSAGE ID>"
+    // Success format: "1701|<CELL_NO>|<MESSAGE ID>" or "1701|<CELL_NO>|<MESSAGE ID>,1701|<CELL_NO>|<MESSAGE ID>"
     // Error format: Error code (e.g., "1702", "1703", etc.)
     
+    if (!responseText) {
+      console.error('[OTP] Empty response from API');
+      otpStore.delete(cleanMsisdn);
+      return {
+        success: false,
+        error: 'Empty response from SMS service',
+        errorCode: 'EMPTY_RESPONSE'
+      };
+    }
+    
     if (responseText.startsWith('1701|')) {
-      // Success
+      // Success - parse the response
+      // Format: 1701|<CELL_NO>|<MESSAGE ID>
       const parts = responseText.split('|');
+      const cellNo = parts[1] || cleanMsisdn;
       const messageId = parts[2] || '';
       
       console.log('[OTP] OTP sent successfully:', {
         msisdn: cleanMsisdn,
+        cellNo: cellNo,
         messageId: messageId,
         expiresAt: new Date(expiresAt).toISOString()
       });
