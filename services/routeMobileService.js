@@ -118,21 +118,23 @@ async function generateOTP(msisdn) {
     // Build query parameters exactly as per BMI Stock app implementation
     // Format matches: http://sms6.rmlconnect.net:8080/bulksms/bulksms?username=...&password=...&type=0&dlr=1&destination=...&source=...&message=...&entityid=...&tempid=...
     // This matches the exact format used in SerialConsoleActivity.java (lines 3125-3133)
+    // Note: Password has special characters (1L(d!i2O) - need to encode only special chars, not the whole param
+    // In Java, they use string concatenation, but URL special chars should be encoded
     const queryParams = [
-      `username=${SMS_USERNAME}`, // Not URL encoded in BMI app
-      `password=${SMS_PASSWORD}`, // Not URL encoded in BMI app
+      `username=${encodeURIComponent(SMS_USERNAME)}`, // Encode to handle any special chars
+      `password=${encodeURIComponent(SMS_PASSWORD)}`, // Encode password with special chars: 1L(d!i2O
       `type=0`, // Plain text (GSM 3.38 Character encoding)
       `dlr=1`, // Delivery report required (BMI app uses dlr=1)
-      `destination=${destinationWithCountryCode}`, // With country code, not URL encoded in BMI app
-      `source=${SMS_SOURCE}`, // Sender ID, not URL encoded in BMI app
+      `destination=${destinationWithCountryCode}`, // With country code
+      `source=${encodeURIComponent(SMS_SOURCE)}`, // Sender ID
       `message=${encodedMessage}` // URL encoded message only
     ];
     
     // Add DLT parameters if configured (Required for India commercial SMS)
     // BMI Stock app uses: entityid=1201161725113535191&tempid=1207164389681675936
     if (OTP_ENTITY_ID && OTP_TEMPLATE_ID) {
-      queryParams.push(`entityid=${OTP_ENTITY_ID}`); // Not URL encoded in BMI app
-      queryParams.push(`tempid=${OTP_TEMPLATE_ID}`); // Not URL encoded in BMI app
+      queryParams.push(`entityid=${OTP_ENTITY_ID}`); // Numbers don't need encoding
+      queryParams.push(`tempid=${OTP_TEMPLATE_ID}`); // Numbers don't need encoding
       console.log('[OTP] Using DLT registration:', {
         entityId: OTP_ENTITY_ID,
         templateId: OTP_TEMPLATE_ID
@@ -153,34 +155,57 @@ async function generateOTP(msisdn) {
     console.log('[OTP] Full URL (password hidden):', fullUrl.replace(/password=[^&]*/, 'password=***'));
 
     // Make API request using GET method (as per Route Mobile documentation)
+    // BMI Stock app uses URLConnection with GET request
     let response;
     let responseText;
     
     try {
+      console.log('[OTP] Making HTTP GET request to Route Mobile API...');
       response = await axios.get(fullUrl, {
-        timeout: 25000, // 25 second timeout (as per Route Mobile example)
+        timeout: 30000, // 30 second timeout
         headers: {
           'Accept': '*/*',
-          'User-Agent': 'Node.js/OTP-Service'
+          'User-Agent': 'Node.js/OTP-Service',
+          'Connection': 'keep-alive'
         },
         validateStatus: function (status) {
           // Accept any status code as Route Mobile returns error codes in response body
           return status >= 200 && status < 500;
-        }
+        },
+        maxRedirects: 0 // Don't follow redirects
       });
 
       // Route Mobile API returns plain text response
       responseText = (response.data?.toString() || response.data || '').trim();
-      console.log('[OTP] API Response:', responseText);
-      console.log('[OTP] Response Status:', response.status);
-      console.log('[OTP] Response Headers:', response.headers);
+      console.log('[OTP] ========== API RESPONSE ==========');
+      console.log('[OTP] Response Status Code:', response.status);
+      console.log('[OTP] Response Body (Raw):', responseText);
+      console.log('[OTP] Response Length:', responseText.length);
+      console.log('[OTP] Response Type:', typeof responseText);
+      console.log('[OTP] ===================================');
+      
+      // Log response headers for debugging
+      if (response.headers) {
+        console.log('[OTP] Response Headers:', JSON.stringify(response.headers, null, 2));
+      }
     } catch (axiosError) {
       // Handle axios errors
+      console.error('[OTP] ========== API ERROR ==========');
       if (axiosError.response) {
         responseText = (axiosError.response.data?.toString() || axiosError.response.data || '').trim();
-        console.error('[OTP] API Error Response:', responseText);
-        console.error('[OTP] API Error Status:', axiosError.response.status);
+        console.error('[OTP] Error Status:', axiosError.response.status);
+        console.error('[OTP] Error Response:', responseText);
+        console.error('[OTP] Error Headers:', axiosError.response.headers);
+      } else if (axiosError.request) {
+        console.error('[OTP] No response received');
+        console.error('[OTP] Request URL:', fullUrl.replace(/password=[^&]*/, 'password=***'));
+        console.error('[OTP] Error:', axiosError.message);
       } else {
+        console.error('[OTP] Request setup error:', axiosError.message);
+      }
+      console.error('[OTP] =================================');
+      
+      if (!axiosError.response) {
         throw axiosError; // Re-throw if not a response error
       }
     }
@@ -230,33 +255,45 @@ async function generateOTP(msisdn) {
       return {
         success: true,
         messageId: messageId,
-        msisdn: cleanMsisdn
+        msisdn: cleanMsisdn,
+        response: responseText, // Include full server response for verification
+        cellNumber: cellNo,
+        verified: true // Indicates server confirmed message submission
       };
     } else {
       // Error response - remove OTP from store on error
       otpStore.delete(cleanMsisdn);
       
-      const errorCode = responseText.split('|')[0] || responseText;
+      const errorCode = responseText.split('|')[0] || responseText.trim();
       const errorMessages = {
-        '1702': 'Invalid URL or missing parameter',
-        '1703': 'Invalid username or password',
-        '1704': 'Invalid value in type parameter',
-        '1705': 'Invalid message',
-        '1706': 'Invalid destination',
-        '1707': 'Invalid source (Sender)',
-        '1708': 'Invalid value for dlr parameter',
-        '1709': 'User validation failed',
-        '1710': 'Internal error',
-        '1025': 'Insufficient credit',
-        '1715': 'Response timeout',
-        '1032': 'DND reject',
-        '1028': 'Spam message'
+        '1702': 'Invalid URL or missing parameter. Check all required parameters are present.',
+        '1703': 'Invalid username or password. Verify credentials are correct.',
+        '1704': 'Invalid value in type parameter. Should be 0 for plain text.',
+        '1705': 'Invalid message. Message format or content is invalid.',
+        '1706': 'Invalid destination. Mobile number format is incorrect.',
+        '1707': 'Invalid source (Sender ID). Sender ID "WELTDY" may not be approved.',
+        '1708': 'Invalid value for dlr parameter. Should be 0 or 1.',
+        '1709': 'User validation failed. Account may be suspended or invalid.',
+        '1710': 'Internal error at Route Mobile. Please try again later.',
+        '1025': 'Insufficient credit. Account balance is low.',
+        '1715': 'Response timeout. Request took too long.',
+        '1032': 'DND reject. Mobile number is on Do Not Disturb list.',
+        '1028': 'Spam message detected. Message content flagged as spam.'
       };
+
+      const errorMessage = errorMessages[errorCode] || `Unknown error occurred. Error code: ${errorCode}`;
+      
+      console.error('[OTP] ❌ ERROR:', {
+        errorCode: errorCode,
+        errorMessage: errorMessage,
+        rawResponse: responseText
+      });
 
       return {
         success: false,
-        error: errorMessages[errorCode] || 'Unknown error occurred',
-        errorCode: errorCode
+        error: errorMessage,
+        errorCode: errorCode,
+        rawResponse: responseText
       };
     }
   } catch (error) {
