@@ -1,46 +1,68 @@
 const axios = require('axios');
 
 /**
- * Route Mobile OTP Service
- * Handles OTP generation and validation using Route Mobile API
+ * Route Mobile Bulk SMS Service for OTP
+ * Handles OTP generation, sending via Bulk SMS API, and local verification
  */
 
 // Get configuration from environment variables
-// Note: On Vercel, ensure these are set in Environment Variables settings
-const OTP_API_BASE_URL = process.env.OTP_API_BASE_URL || '';
-const OTP_USERNAME = process.env.OTP_USERNAME || '';
-const OTP_PASSWORD = process.env.OTP_PASSWORD || '';
-const OTP_SOURCE = process.env.OTP_SOURCE || '';
+const SMS_API_BASE_URL = process.env.OTP_API_BASE_URL || 'http://sms6.rmlconnect.net:8080';
+const SMS_USERNAME = process.env.OTP_USERNAME || '';
+const SMS_PASSWORD = process.env.OTP_PASSWORD || '';
+const SMS_SOURCE = process.env.OTP_SOURCE || '';
 const OTP_LENGTH = parseInt(process.env.OTP_LENGTH || '6', 10);
 const OTP_EXPIRY = parseInt(process.env.OTP_EXPIRY || '300', 10); // Default 5 minutes
 const OTP_MESSAGE_TEMPLATE = process.env.OTP_MESSAGE_TEMPLATE || 'Your OTP is %m. Valid for 5 minutes.';
 
+// In-memory OTP store: mobile -> { otp, expiresAt, attempts }
+const otpStore = new Map();
+
+// Cleanup expired OTPs every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [mobile, data] of otpStore.entries()) {
+    if (data.expiresAt < now) {
+      otpStore.delete(mobile);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // Log configuration on module load (without sensitive data)
 console.log('[OTP] Service initialized:', {
-  hasBaseUrl: !!OTP_API_BASE_URL,
-  baseUrl: OTP_API_BASE_URL,
-  hasUsername: !!OTP_USERNAME,
-  hasPassword: !!OTP_PASSWORD,
-  hasSource: !!OTP_SOURCE,
+  hasBaseUrl: !!SMS_API_BASE_URL,
+  baseUrl: SMS_API_BASE_URL,
+  hasUsername: !!SMS_USERNAME,
+  hasPassword: !!SMS_PASSWORD,
+  hasSource: !!SMS_SOURCE,
   otplen: OTP_LENGTH,
   exptime: OTP_EXPIRY,
   messageTemplate: OTP_MESSAGE_TEMPLATE
 });
 
 /**
- * Generate and send OTP to mobile number
+ * Generate a random numeric OTP
+ * @param {number} length - Length of OTP
+ * @returns {string} Generated OTP
+ */
+function generateRandomOTP(length) {
+  const min = Math.pow(10, length - 1);
+  const max = Math.pow(10, length) - 1;
+  return Math.floor(Math.random() * (max - min + 1) + min).toString();
+}
+
+/**
+ * Generate and send OTP to mobile number using Bulk SMS API
  * @param {string} msisdn - Mobile number (10 digits, without country code)
- * @param {string} tagname - Optional tag name for batch identification
  * @returns {Promise<{success: boolean, messageId?: string, error?: string, errorCode?: string}>}
  */
-async function generateOTP(msisdn, tagname = '') {
+async function generateOTP(msisdn) {
   try {
     // Validate required configuration
-    if (!OTP_API_BASE_URL || !OTP_USERNAME || !OTP_PASSWORD || !OTP_SOURCE) {
-      console.error('[OTP] Missing OTP API configuration');
+    if (!SMS_API_BASE_URL || !SMS_USERNAME || !SMS_PASSWORD || !SMS_SOURCE) {
+      console.error('[OTP] Missing SMS API configuration');
       return {
         success: false,
-        error: 'OTP service not configured',
+        error: 'SMS service not configured',
         errorCode: 'CONFIG_ERROR'
       };
     }
@@ -55,147 +77,96 @@ async function generateOTP(msisdn, tagname = '') {
       };
     }
 
-    // Validate message template contains %m placeholder
-    if (!OTP_MESSAGE_TEMPLATE.includes('%m')) {
-      console.error('[OTP] Message template must contain %m placeholder');
-      return {
-        success: false,
-        error: 'Message template configuration error',
-        errorCode: 'TEMPLATE_ERROR'
-      };
-    }
+    // Generate OTP
+    const otp = generateRandomOTP(OTP_LENGTH);
+    const expiresAt = Date.now() + (OTP_EXPIRY * 1000);
 
-    // URL encode the message template
-    // Route Mobile API requires %m to remain as %m (not %25m)
-    // Split by %m, encode each part, then join with %m
-    const parts = OTP_MESSAGE_TEMPLATE.split('%m');
-    let encodedMessage = '';
-    for (let i = 0; i < parts.length; i++) {
-      encodedMessage += encodeURIComponent(parts[i]);
-      if (i < parts.length - 1) {
-        encodedMessage += '%m'; // Preserve %m placeholder
-      }
-    }
+    // Store OTP in memory
+    otpStore.set(cleanMsisdn, {
+      otp: otp,
+      expiresAt: expiresAt,
+      attempts: 0,
+      createdAt: Date.now()
+    });
 
-    console.log('[OTP] Message template:', OTP_MESSAGE_TEMPLATE);
-    console.log('[OTP] Encoded message:', encodedMessage);
+    // Create message with OTP
+    const message = OTP_MESSAGE_TEMPLATE.replace('%m', otp);
 
-    // Validate all required parameters
-    const params = {
-      username: OTP_USERNAME,
-      password: OTP_PASSWORD,
-      msisdn: cleanMsisdn,
-      msg: encodedMessage,
-      source: OTP_SOURCE,
-      otplen: OTP_LENGTH.toString(),
-      exptime: OTP_EXPIRY.toString()
-    };
+    // URL encode the message (UTF-8 encoding)
+    const encodedMessage = encodeURIComponent(message);
 
-    // Check for missing parameters
-    const missingParams = [];
-    for (const [key, value] of Object.entries(params)) {
-      if (!value || value === '') {
-        missingParams.push(key);
-      }
-    }
-
-    if (missingParams.length > 0) {
-      console.error('[OTP] Missing parameters:', missingParams);
-      return {
-        success: false,
-        error: `Missing required parameters: ${missingParams.join(', ')}`,
-        errorCode: 'MISSING_PARAMS'
-      };
-    }
-
-    // Validate otplen is numeric
-    if (isNaN(OTP_LENGTH) || OTP_LENGTH < 4 || OTP_LENGTH > 10) {
-      return {
-        success: false,
-        error: 'OTP length must be a number between 4 and 10',
-        errorCode: 'INVALID_OTP_LENGTH'
-      };
-    }
-
-    // Validate exptime is numeric
-    if (isNaN(OTP_EXPIRY) || OTP_EXPIRY < 60) {
-      return {
-        success: false,
-        error: 'OTP expiry must be a number (minimum 60 seconds)',
-        errorCode: 'INVALID_EXPIRY'
-      };
-    }
-
-    // Build the API URL
-    const apiUrl = `${OTP_API_BASE_URL}/OtpApi/otpgenerate`;
+    // Build the Bulk SMS API URL
+    // Format: http://<server>:8080/bulksms/bulksms?username=XXXX&password=YYYYY&type=0&dlr=0&destination=QQQQQQQQQ&source=RRRR&message=SSSSSSSS
+    const apiUrl = `${SMS_API_BASE_URL}/bulksms/bulksms`;
     
-    // Build query parameters manually to preserve %m
-    // URLSearchParams would encode %m to %25m, so we build the query string manually
+    // Build query parameters
     const queryParams = [
-      `username=${encodeURIComponent(params.username)}`,
-      `password=${encodeURIComponent(params.password)}`,
-      `msisdn=${encodeURIComponent(params.msisdn)}`,
-      `msg=${params.msg}`, // Already encoded with %m preserved
-      `source=${encodeURIComponent(params.source)}`,
-      `otplen=${params.otplen}`,
-      `exptime=${params.exptime}`
+      `username=${encodeURIComponent(SMS_USERNAME)}`,
+      `password=${encodeURIComponent(SMS_PASSWORD)}`,
+      `type=0`, // Plain text (GSM 3.38 Character encoding)
+      `dlr=0`, // No delivery report required
+      `destination=${encodeURIComponent(cleanMsisdn)}`,
+      `source=${encodeURIComponent(SMS_SOURCE)}`,
+      `message=${encodedMessage}`
     ];
-    
-    if (tagname) {
-      queryParams.push(`tagname=${encodeURIComponent(tagname)}`);
-    }
 
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
 
-    console.log('[OTP] Configuration check:', {
-      hasBaseUrl: !!OTP_API_BASE_URL,
-      hasUsername: !!OTP_USERNAME,
-      hasPassword: !!OTP_PASSWORD,
-      hasSource: !!OTP_SOURCE,
-      otplen: params.otplen,
-      exptime: params.exptime,
-      msisdn: cleanMsisdn
+    console.log('[OTP] Sending SMS:', {
+      url: apiUrl,
+      msisdn: cleanMsisdn,
+      messageLength: message.length,
+      otpLength: otp.length
     });
     console.log('[OTP] Full URL (password hidden):', fullUrl.replace(/password=[^&]*/, 'password=***'));
 
     // Make API request
     const response = await axios.get(fullUrl, {
-      timeout: 10000 // 10 second timeout
+      timeout: 15000 // 15 second timeout
     });
 
     const responseText = response.data?.toString().trim() || '';
     console.log('[OTP] API Response:', responseText);
 
     // Parse response
-    // Success format: "1701|MSISDN:MessageID"
+    // Success format: "1701|<CELL_NO>|<MESSAGE ID>"
     // Error format: Error code (e.g., "1702", "1703", etc.)
     
     if (responseText.startsWith('1701|')) {
       // Success
       const parts = responseText.split('|');
-      const messageId = parts[1]?.split(':')[1] || '';
+      const messageId = parts[2] || '';
       
+      console.log('[OTP] OTP sent successfully:', {
+        msisdn: cleanMsisdn,
+        messageId: messageId,
+        expiresAt: new Date(expiresAt).toISOString()
+      });
+
       return {
         success: true,
         messageId: messageId,
         msisdn: cleanMsisdn
       };
     } else {
-      // Error response
+      // Error response - remove OTP from store on error
+      otpStore.delete(cleanMsisdn);
+      
       const errorCode = responseText.split('|')[0] || responseText;
       const errorMessages = {
-        '1702': 'One of the parameter is missing or OTP is not numeric',
-        '1703': 'Authentication failed',
+        '1702': 'Invalid URL or missing parameter',
+        '1703': 'Invalid username or password',
+        '1704': 'Invalid value in type parameter',
+        '1705': 'Invalid message',
         '1706': 'Invalid destination',
-        '1705': 'Message does not contain %m',
-        '1707': 'Invalid source',
-        '1710': 'Some error occurred',
-        '1715': 'Response time out',
-        '1025': 'Insufficient user credit',
-        '1032': 'DND destination',
-        '1033': 'Source template mismatch',
-        '1035': 'User opt out',
-        '1042': 'Explicit DND reject'
+        '1707': 'Invalid source (Sender)',
+        '1708': 'Invalid value for dlr parameter',
+        '1709': 'User validation failed',
+        '1710': 'Internal error',
+        '1025': 'Insufficient credit',
+        '1715': 'Response timeout',
+        '1032': 'DND reject',
+        '1028': 'Spam message'
       };
 
       return {
@@ -206,6 +177,10 @@ async function generateOTP(msisdn, tagname = '') {
     }
   } catch (error) {
     console.error('[OTP] Generate OTP error:', error.message);
+    
+    // Remove OTP from store on error
+    const cleanMsisdn = msisdn.replace(/\D/g, '');
+    otpStore.delete(cleanMsisdn);
     
     if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
       return {
@@ -219,7 +194,7 @@ async function generateOTP(msisdn, tagname = '') {
       // API returned error response
       return {
         success: false,
-        error: 'OTP service error',
+        error: 'SMS service error',
         errorCode: 'API_ERROR'
       };
     }
@@ -233,23 +208,13 @@ async function generateOTP(msisdn, tagname = '') {
 }
 
 /**
- * Validate OTP
+ * Validate OTP (local verification against stored OTP)
  * @param {string} msisdn - Mobile number (10 digits, without country code)
  * @param {string} otp - OTP to validate
  * @returns {Promise<{success: boolean, error?: string, errorCode?: string}>}
  */
 async function validateOTP(msisdn, otp) {
   try {
-    // Validate required configuration
-    if (!OTP_API_BASE_URL || !OTP_USERNAME || !OTP_PASSWORD) {
-      console.error('[OTP] Missing OTP API configuration');
-      return {
-        success: false,
-        error: 'OTP service not configured',
-        errorCode: 'CONFIG_ERROR'
-      };
-    }
-
     // Validate mobile number
     const cleanMsisdn = msisdn.replace(/\D/g, '');
     if (cleanMsisdn.length !== 10) {
@@ -269,80 +234,64 @@ async function validateOTP(msisdn, otp) {
       };
     }
 
-    // Build the API URL
-    const apiUrl = `${OTP_API_BASE_URL}/OtpApi/checkotp`;
-    
-    // Build query parameters
-    const params = new URLSearchParams({
-      username: OTP_USERNAME,
-      password: OTP_PASSWORD,
-      msisdn: cleanMsisdn,
-      otp: otp
-    });
+    // Get stored OTP data
+    const otpData = otpStore.get(cleanMsisdn);
 
-    const fullUrl = `${apiUrl}?${params.toString()}`;
+    if (!otpData) {
+      return {
+        success: false,
+        error: 'OTP not found. Please request a new OTP.',
+        errorCode: 'OTP_NOT_FOUND'
+      };
+    }
 
-    console.log('[OTP] Validating OTP:', {
-      url: apiUrl,
+    // Check if OTP has expired
+    if (Date.now() > otpData.expiresAt) {
+      otpStore.delete(cleanMsisdn);
+      return {
+        success: false,
+        error: 'OTP has expired. Please request a new OTP.',
+        errorCode: 'OTP_EXPIRED'
+      };
+    }
+
+    // Check attempts (prevent brute force)
+    if (otpData.attempts >= 5) {
+      otpStore.delete(cleanMsisdn);
+      return {
+        success: false,
+        error: 'Too many failed attempts. Please request a new OTP.',
+        errorCode: 'TOO_MANY_ATTEMPTS'
+      };
+    }
+
+    // Validate OTP
+    if (otpData.otp !== otp) {
+      otpData.attempts += 1;
+      return {
+        success: false,
+        error: 'Invalid OTP. Please try again.',
+        errorCode: 'INVALID_OTP'
+      };
+    }
+
+    // OTP is valid - remove from store
+    otpStore.delete(cleanMsisdn);
+
+    console.log('[OTP] OTP validated successfully:', {
       msisdn: cleanMsisdn
     });
 
-    // Make API request
-    const response = await axios.get(fullUrl, {
-      timeout: 10000 // 10 second timeout
-    });
-
-    const responseText = response.data?.toString().trim() || '';
-    console.log('[OTP] Validation Response:', responseText);
-
-    // Parse response
-    // Success: "101"
-    // Errors: "102" (expired), "103" (not found), "104" (MSISDN not found), etc.
-    
-    if (responseText === '101') {
-      return {
-        success: true
-      };
-    } else {
-      const errorMessages = {
-        '102': 'OTP has expired',
-        '103': 'Entry for OTP not found',
-        '104': 'MSISDN not found',
-        '1702': 'One of the parameter missing or OTP is not numeric',
-        '1703': 'Authentication failed',
-        '1706': 'Given destination is invalid'
-      };
-
-      const errorCode = responseText;
-      return {
-        success: false,
-        error: errorMessages[errorCode] || 'OTP validation failed',
-        errorCode: errorCode
-      };
-    }
+    return {
+      success: true
+    };
   } catch (error) {
     console.error('[OTP] Validate OTP error:', error.message);
     
-    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
-      return {
-        success: false,
-        error: 'Request timeout. Please try again.',
-        errorCode: 'TIMEOUT'
-      };
-    }
-
-    if (error.response) {
-      return {
-        success: false,
-        error: 'OTP service error',
-        errorCode: 'API_ERROR'
-      };
-    }
-
     return {
       success: false,
       error: 'Failed to validate OTP. Please try again.',
-      errorCode: 'NETWORK_ERROR'
+      errorCode: 'VALIDATION_ERROR'
     };
   }
 }
@@ -351,4 +300,3 @@ module.exports = {
   generateOTP,
   validateOTP
 };
-
