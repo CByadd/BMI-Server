@@ -42,29 +42,51 @@ async function generateOTP(msisdn, tagname = '') {
       };
     }
 
+    // Validate message template contains %m placeholder
+    if (!OTP_MESSAGE_TEMPLATE.includes('%m')) {
+      console.error('[OTP] Message template must contain %m placeholder');
+      return {
+        success: false,
+        error: 'Message template configuration error',
+        errorCode: 'TEMPLATE_ERROR'
+      };
+    }
+
     // URL encode the message template
-    const encodedMessage = encodeURIComponent(OTP_MESSAGE_TEMPLATE);
+    // Route Mobile API requires %m to remain as %m (not %25m)
+    // Split by %m, encode each part, then join with %m
+    const parts = OTP_MESSAGE_TEMPLATE.split('%m');
+    let encodedMessage = '';
+    for (let i = 0; i < parts.length; i++) {
+      encodedMessage += encodeURIComponent(parts[i]);
+      if (i < parts.length - 1) {
+        encodedMessage += '%m'; // Preserve %m placeholder
+      }
+    }
+
+    console.log('[OTP] Message template:', OTP_MESSAGE_TEMPLATE);
+    console.log('[OTP] Encoded message:', encodedMessage);
 
     // Build the API URL
     const apiUrl = `${OTP_API_BASE_URL}/OtpApi/otpgenerate`;
     
-    // Build query parameters
-    const params = new URLSearchParams({
-      username: OTP_USERNAME,
-      password: OTP_PASSWORD,
-      msisdn: cleanMsisdn,
-      msg: encodedMessage,
-      source: OTP_SOURCE,
-      otplen: OTP_LENGTH.toString(),
-      exptime: OTP_EXPIRY.toString()
-    });
-
-    // Add optional tagname if provided
+    // Build query parameters manually to preserve %m
+    // URLSearchParams would encode %m to %25m, so we build the query string manually
+    const queryParams = [
+      `username=${encodeURIComponent(OTP_USERNAME)}`,
+      `password=${encodeURIComponent(OTP_PASSWORD)}`,
+      `msisdn=${encodeURIComponent(cleanMsisdn)}`,
+      `msg=${encodedMessage}`, // Already encoded with %m preserved
+      `source=${encodeURIComponent(OTP_SOURCE)}`,
+      `otplen=${OTP_LENGTH}`,
+      `exptime=${OTP_EXPIRY}`
+    ];
+    
     if (tagname) {
-      params.append('tagname', tagname);
+      queryParams.push(`tagname=${encodeURIComponent(tagname)}`);
     }
 
-    const fullUrl = `${apiUrl}?${params.toString()}`;
+    const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
 
     console.log('[OTP] Sending OTP request:', {
       url: apiUrl,
