@@ -98,22 +98,24 @@ exports.testSMS = async (req, res) => {
     const baseUrl = SMS_API_BASE_URL.replace(/\/$/, '');
     const apiUrl = `${baseUrl}/bulksms/bulksms`;
     
+    // Build query parameters exactly as per BMI Stock app implementation
+    // Format matches SerialConsoleActivity.java (lines 3125-3133)
     const queryParams = [
-      `username=${encodeURIComponent(SMS_USERNAME)}`,
-      `password=${encodeURIComponent(SMS_PASSWORD)}`,
+      `username=${SMS_USERNAME}`, // Not URL encoded in BMI app
+      `password=${SMS_PASSWORD}`, // Not URL encoded in BMI app
       `type=0`, // Plain text
-      `dlr=0`, // No delivery report
-      `destination=${encodeURIComponent(destinationWithCountryCode)}`, // With country code
-      `source=${encodeURIComponent(SMS_SOURCE)}`,
-      `message=${encodedMessage}`
+      `dlr=1`, // Delivery report required (BMI app uses dlr=1)
+      `destination=${destinationWithCountryCode}`, // With country code, not URL encoded
+      `source=${SMS_SOURCE}`, // Sender ID, not URL encoded
+      `message=${encodedMessage}` // Only message is URL encoded
     ];
     
     // Add DLT parameters if configured (Required for India commercial SMS)
     const OTP_ENTITY_ID = process.env.OTP_ENTITY_ID || '';
     const OTP_TEMPLATE_ID = process.env.OTP_TEMPLATE_ID || '';
     if (OTP_ENTITY_ID && OTP_TEMPLATE_ID) {
-      queryParams.push(`entityid=${encodeURIComponent(OTP_ENTITY_ID)}`);
-      queryParams.push(`tempid=${encodeURIComponent(OTP_TEMPLATE_ID)}`);
+      queryParams.push(`entityid=${OTP_ENTITY_ID}`); // Not URL encoded in BMI app
+      queryParams.push(`tempid=${OTP_TEMPLATE_ID}`); // Not URL encoded in BMI app
     }
     
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;

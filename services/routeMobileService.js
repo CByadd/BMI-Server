@@ -115,25 +115,24 @@ async function generateOTP(msisdn) {
     const baseUrl = SMS_API_BASE_URL.replace(/\/$/, '');
     const apiUrl = `${baseUrl}/bulksms/bulksms`;
     
-    // Build query parameters exactly as per Route Mobile PHP example
-    // Format matches: http://host:port/bulksms/bulksms?username=...&password=...&type=...&dlr=...&destination=...&source=...&message=...
-    // All parameters are URL encoded (JavaScript encodeURIComponent = PHP urlencode)
-    // Using destination with country code (91 for India) as some carriers require it
+    // Build query parameters exactly as per BMI Stock app implementation
+    // Format matches: http://sms6.rmlconnect.net:8080/bulksms/bulksms?username=...&password=...&type=0&dlr=1&destination=...&source=...&message=...&entityid=...&tempid=...
+    // This matches the exact format used in SerialConsoleActivity.java (lines 3125-3133)
     const queryParams = [
-      `username=${encodeURIComponent(SMS_USERNAME)}`,
-      `password=${encodeURIComponent(SMS_PASSWORD)}`,
-      `type=0`, // Plain text (GSM 3.38 Character encoding) - same as PHP type=0
-      `dlr=0`, // No delivery report required (0 = not required, 1 = required)
-      `destination=${encodeURIComponent(destinationWithCountryCode)}`, // 12 digits with country code (91 + 10 digits)
-      `source=${encodeURIComponent(SMS_SOURCE)}`, // Sender ID
-      `message=${encodedMessage}` // URL encoded message (urlencode in PHP = encodeURIComponent in JS)
+      `username=${SMS_USERNAME}`, // Not URL encoded in BMI app
+      `password=${SMS_PASSWORD}`, // Not URL encoded in BMI app
+      `type=0`, // Plain text (GSM 3.38 Character encoding)
+      `dlr=1`, // Delivery report required (BMI app uses dlr=1)
+      `destination=${destinationWithCountryCode}`, // With country code, not URL encoded in BMI app
+      `source=${SMS_SOURCE}`, // Sender ID, not URL encoded in BMI app
+      `message=${encodedMessage}` // URL encoded message only
     ];
     
     // Add DLT parameters if configured (Required for India commercial SMS)
-    // These are required for DLT registered templates in India
+    // BMI Stock app uses: entityid=1201161725113535191&tempid=1207164389681675936
     if (OTP_ENTITY_ID && OTP_TEMPLATE_ID) {
-      queryParams.push(`entityid=${encodeURIComponent(OTP_ENTITY_ID)}`);
-      queryParams.push(`tempid=${encodeURIComponent(OTP_TEMPLATE_ID)}`);
+      queryParams.push(`entityid=${OTP_ENTITY_ID}`); // Not URL encoded in BMI app
+      queryParams.push(`tempid=${OTP_TEMPLATE_ID}`); // Not URL encoded in BMI app
       console.log('[OTP] Using DLT registration:', {
         entityId: OTP_ENTITY_ID,
         templateId: OTP_TEMPLATE_ID
