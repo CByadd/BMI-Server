@@ -175,10 +175,24 @@ async function generateOTP(msisdn) {
     
     if (responseText.startsWith('1701|')) {
       // Success - parse the response
-      // Format: 1701|<CELL_NO>|<MESSAGE ID>
+      // Format: 1701|<CELL_NO>:<MESSAGE ID> or 1701|<CELL_NO>|<MESSAGE ID>
       const parts = responseText.split('|');
-      const cellNo = parts[1] || cleanMsisdn;
-      const messageId = parts[2] || '';
+      const cellNoAndMessageId = parts[1] || '';
+      
+      // Handle both formats: "919443932288:4bb43bc6-..." or separate parts
+      let cellNo = cleanMsisdn;
+      let messageId = '';
+      
+      if (cellNoAndMessageId.includes(':')) {
+        // Format: CELL_NO:MESSAGE_ID
+        const cellParts = cellNoAndMessageId.split(':');
+        cellNo = cellParts[0] || cleanMsisdn;
+        messageId = cellParts.slice(1).join(':'); // Join in case message ID contains colons
+      } else {
+        // Format: separate parts (parts[1] = cellNo, parts[2] = messageId)
+        cellNo = cellNoAndMessageId;
+        messageId = parts[2] || '';
+      }
       
       console.log('[OTP] OTP sent successfully:', {
         msisdn: cleanMsisdn,
