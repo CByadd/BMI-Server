@@ -16,6 +16,9 @@ const OTP_MESSAGE_TEMPLATE = process.env.OTP_MESSAGE_TEMPLATE || 'Your OTP is %m
 // DLT Registration (Required for India commercial SMS)
 const OTP_ENTITY_ID = process.env.OTP_ENTITY_ID || '';
 const OTP_TEMPLATE_ID = process.env.OTP_TEMPLATE_ID || '';
+// Mock OTP Mode (for testing - uses "000000" as OTP without sending SMS)
+const OTP_MOCK_MODE = process.env.OTP_MOCK_MODE === 'true' || process.env.OTP_MOCK_MODE === '1';
+const MOCK_OTP = '000000'; // Fixed OTP for testing
 
 // In-memory OTP store: mobile -> { otp, expiresAt, attempts }
 const otpStore = new Map();
@@ -39,8 +42,24 @@ console.log('[OTP] Service initialized:', {
   hasSource: !!SMS_SOURCE,
   otplen: OTP_LENGTH,
   exptime: OTP_EXPIRY,
-  messageTemplate: OTP_MESSAGE_TEMPLATE
+  messageTemplate: OTP_MESSAGE_TEMPLATE,
+  hasEntityId: !!OTP_ENTITY_ID,
+  hasTemplateId: !!OTP_TEMPLATE_ID,
+  dltEnabled: !!(OTP_ENTITY_ID && OTP_TEMPLATE_ID),
+  mockMode: OTP_MOCK_MODE,
+  mockOtp: OTP_MOCK_MODE ? MOCK_OTP : 'N/A'
 });
+
+if (OTP_MOCK_MODE) {
+  console.log('[OTP] ⚠️  MOCK MODE ENABLED - Using fixed OTP "000000" for testing');
+  console.log('[OTP] ⚠️  No actual SMS will be sent. Use OTP: 000000');
+}
+
+if (OTP_MOCK_MODE) {
+  console.log('[OTP] ⚠️  MOCK MODE ENABLED - Using fixed OTP "000000" for testing');
+  console.log('[OTP] ⚠️  No actual SMS will be sent. Use OTP: 000000');
+  console.log('[OTP] ⚠️  Set OTP_MOCK_MODE=false to use real SMS sending');
+}
 
 /**
  * Generate a random numeric OTP
@@ -90,8 +109,8 @@ async function generateOTP(msisdn) {
     // Some carriers require country code prefix
     const destinationWithCountryCode = `91${cleanMsisdn}`;
 
-    // Generate OTP
-    const otp = generateRandomOTP(OTP_LENGTH);
+    // Generate OTP (use mock OTP if mock mode is enabled)
+    const otp = OTP_MOCK_MODE ? MOCK_OTP : generateRandomOTP(OTP_LENGTH);
     const expiresAt = Date.now() + (OTP_EXPIRY * 1000);
 
     // Store OTP in memory
@@ -99,8 +118,44 @@ async function generateOTP(msisdn) {
       otp: otp,
       expiresAt: expiresAt,
       attempts: 0,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      isMock: OTP_MOCK_MODE
     });
+
+    // If mock mode, skip SMS sending and return success immediately
+    if (OTP_MOCK_MODE) {
+      console.log('[OTP] 🧪 MOCK MODE: Skipping SMS sending');
+      console.log('[OTP] 🧪 MOCK OTP generated:', otp);
+      console.log('[OTP] 🧪 Use OTP "000000" to verify');
+      
+      return {
+        success: true,
+        messageId: 'MOCK-' + Date.now(),
+        msisdn: cleanMsisdn,
+        response: `1701|${destinationWithCountryCode}:MOCK-MESSAGE-ID`,
+        cellNumber: destinationWithCountryCode,
+        verified: true,
+        isMock: true,
+        mockOtp: MOCK_OTP
+      };
+    }
+
+    // If mock mode, skip SMS sending and return success immediately
+    if (OTP_MOCK_MODE) {
+      console.log('[OTP] 🧪 MOCK MODE: Skipping SMS send, using OTP:', otp);
+      console.log('[OTP] 🧪 MOCK MODE: OTP stored for mobile:', cleanMsisdn);
+      console.log('[OTP] 🧪 MOCK MODE: OTP expires at:', new Date(expiresAt).toISOString());
+      
+      return {
+        success: true,
+        messageId: 'MOCK-' + Date.now(),
+        msisdn: cleanMsisdn,
+        response: '1701|' + destinationWithCountryCode + ':MOCK-MESSAGE-ID',
+        cellNumber: destinationWithCountryCode,
+        verified: true,
+        mockMode: true
+      };
+    }
 
     // Create message with OTP
     const message = OTP_MESSAGE_TEMPLATE.replace('%m', otp);

@@ -232,14 +232,18 @@ exports.generateOTP = async (req, res) => {
     // Server response format: "1701|919443932288:message-id" means message was submitted successfully
     res.json({
       success: true,
-      message: 'OTP sent successfully',
+      message: result.mockMode ? 'OTP generated (Mock Mode - use 000000)' : 'OTP sent successfully',
       messageId: result.messageId,
       serverResponse: result.response, // Full server response: "1701|919443932288:message-id"
       verified: result.verified || false, // Server confirmed message submission
       cellNumber: result.cellNumber,
-      note: result.response 
-        ? `Server confirmed: ${result.response}. If SMS not received, check: 1) Sender ID approval, 2) DND status, 3) Network connectivity`
-        : 'SMS submitted. If not received, check sender ID approval and DND status.'
+      mockMode: result.mockMode || false, // Indicates if mock mode was used
+      otp: result.mockMode ? '000000' : undefined, // Show OTP in mock mode for testing
+      note: result.mockMode 
+        ? '🧪 MOCK MODE: Use OTP "000000" to verify. No SMS was sent.'
+        : (result.response 
+          ? `Server confirmed: ${result.response}. If SMS not received, check: 1) Sender ID approval, 2) DND status, 3) Network connectivity`
+          : 'SMS submitted. If not received, check sender ID approval and DND status.')
     });
   } catch (error) {
     console.error('Generate OTP error:', error);
