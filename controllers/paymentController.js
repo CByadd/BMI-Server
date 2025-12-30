@@ -2,16 +2,25 @@ const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
 // Validate Razorpay credentials
-if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
+
+if (!keyId || !keySecret) {
   console.error('[RAZORPAY] WARNING: Razorpay credentials not configured!');
-  console.error('[RAZORPAY] RAZORPAY_KEY_ID:', process.env.RAZORPAY_KEY_ID ? 'SET' : 'MISSING');
-  console.error('[RAZORPAY] RAZORPAY_KEY_SECRET:', process.env.RAZORPAY_KEY_SECRET ? 'SET' : 'MISSING');
+  console.error('[RAZORPAY] RAZORPAY_KEY_ID:', keyId ? 'SET' : 'MISSING');
+  console.error('[RAZORPAY] RAZORPAY_KEY_SECRET:', keySecret ? 'SET' : 'MISSING');
+} else {
+  // Log key info without exposing secrets
+  console.log('[RAZORPAY] Credentials loaded:');
+  console.log('[RAZORPAY] Key ID:', keyId.substring(0, 10) + '...' + keyId.substring(keyId.length - 4));
+  console.log('[RAZORPAY] Key Secret:', keySecret.substring(0, 4) + '...' + keySecret.substring(keySecret.length - 4));
+  console.log('[RAZORPAY] Key Type:', keyId.startsWith('rzp_live_') ? 'LIVE' : keyId.startsWith('rzp_test_') ? 'TEST' : 'UNKNOWN');
 }
 
 // Initialize Razorpay instance
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
+  key_id: keyId,
+  key_secret: keySecret,
 });
 
 /**
@@ -53,7 +62,7 @@ exports.createOrder = async (req, res) => {
     const amountInPaise = Math.round(amountNum * 100);
 
     // Validate Razorpay credentials
-    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    if (!keyId || !keySecret) {
       console.error('[RAZORPAY] Missing credentials');
       return res.status(500).json({
         error: 'Payment configuration error',
@@ -69,6 +78,8 @@ exports.createOrder = async (req, res) => {
     };
 
     console.log('[RAZORPAY] Creating order with options:', { ...options, notes: '***' });
+    console.log('[RAZORPAY] Using Key ID:', keyId ? (keyId.substring(0, 10) + '...' + keyId.substring(keyId.length - 4)) : 'MISSING');
+    console.log('[RAZORPAY] Key Secret length:', keySecret ? keySecret.length : 0);
 
     const order = await razorpay.orders.create(options);
 
@@ -92,9 +103,27 @@ exports.createOrder = async (req, res) => {
       error: error.error,
       description: error.description
     });
+    
+    // Additional diagnostic info
+    console.error('[RAZORPAY] Diagnostic info:');
+    console.error('[RAZORPAY] - Key ID present:', !!keyId);
+    console.error('[RAZORPAY] - Key Secret present:', !!keySecret);
+    console.error('[RAZORPAY] - Key ID length:', keyId ? keyId.length : 0);
+    console.error('[RAZORPAY] - Key Secret length:', keySecret ? keySecret.length : 0);
+    console.error('[RAZORPAY] - Key ID prefix:', keyId ? keyId.substring(0, 8) : 'N/A');
 
     // Handle Razorpay API errors
     if (error.statusCode) {
+      // Provide more helpful error message for authentication failures
+      if (error.statusCode === 401) {
+        return res.status(401).json({
+          error: 'Razorpay authentication failed',
+          message: 'Invalid Razorpay credentials. Please check your RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the .env file.',
+          details: 'The provided credentials do not match or are incorrect. Ensure you are using the correct key_id and key_secret from your Razorpay dashboard.',
+          hint: 'Make sure the key_id and key_secret are from the same Razorpay account and match (test keys with test keys, live keys with live keys).'
+        });
+      }
+      
       return res.status(error.statusCode).json({
         error: 'Razorpay API error',
         message: error.description || error.message,
@@ -126,7 +155,6 @@ exports.verifyPayment = async (req, res) => {
 
     // Create the signature string
     const text = `${razorpay_order_id}|${razorpay_payment_id}`;
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
     // Generate the expected signature
     const generatedSignature = crypto
@@ -166,7 +194,6 @@ exports.verifyPayment = async (req, res) => {
  */
 exports.getKey = (req, res) => {
   try {
-    const keyId = process.env.RAZORPAY_KEY_ID;
     if (!keyId) {
       return res.status(500).json({
         error: 'Razorpay key not configured',
