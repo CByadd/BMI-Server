@@ -2,6 +2,23 @@ const express = require('express');
 const router = express.Router();
 const screenController = require('../controllers/screenController');
 const { authenticateToken, checkScreenAccess } = require('../middleware/authMiddleware');
+const multer = require('multer');
+
+// Configure multer for logo uploads (memory storage for Cloudinary)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max file size for logos
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept images only
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
 
 // Export a function that accepts io for real-time updates
 module.exports = (io) => {
@@ -24,6 +41,14 @@ module.exports = (io) => {
     router.put('/adscape/player/:screenId/flow-type', authenticateToken, checkScreenAccess, (req, res) => 
         screenController.updateFlowType(req, res, io)
     );
+
+    // Upload logo for screen (require auth and screen access)
+    router.post('/adscape/player/:screenId/logo', authenticateToken, checkScreenAccess, upload.single('logo'), (req, res) => 
+        screenController.uploadLogo(req, res)
+    );
+
+    // Get logo for screen (no auth required for Android app)
+    router.get('/adscape/player/:screenId/logo', screenController.getLogo);
 
     // Update screen configuration (require auth and screen access)
     router.put('/adscape/player/:screenId/config', authenticateToken, checkScreenAccess, (req, res) => 

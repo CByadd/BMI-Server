@@ -509,11 +509,32 @@ exports.getUserAnalytics = async (req, res) => {
             new Date(record.timestamp) >= thirtyDaysAgo
         );
         
+        // Get unique screen IDs and fetch their device names
+        const screenIds = [...new Set(recentRecords.map(record => record.screenId))];
+        const screenPlayers = await prisma.adscapePlayer.findMany({
+            where: {
+                screenId: { in: screenIds }
+            },
+            select: {
+                screenId: true,
+                deviceName: true
+            }
+        });
+        
+        // Create a map of screenId to deviceName
+        const screenNameMap = {};
+        screenPlayers.forEach(player => {
+            screenNameMap[player.screenId] = player.deviceName || player.screenId;
+        });
+        
         const trends = recentRecords.map(record => ({
             date: record.timestamp.toISOString().split('T')[0],
             bmi: record.bmi,
             weight: record.weightKg,
-            category: record.category
+            category: record.category,
+            screenId: record.screenId,
+            screenName: screenNameMap[record.screenId] || record.screenId,
+            timestamp: record.timestamp.toISOString()
         })).reverse(); // Oldest first for chart
         
         // Category distribution

@@ -1,5 +1,15 @@
 const { PrismaClient, Prisma } = require('@prisma/client');
 const prisma = new PrismaClient();
+const cloudinary = require('cloudinary').v2;
+
+// Configure Cloudinary
+if (!cloudinary.config().cloud_name && process.env.CLOUDINARY_CLOUD_NAME) {
+    cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+}
 
 /**
  * Register or update an Adscape player
@@ -125,12 +135,13 @@ exports.getPlayer = async (req, res) => {
         const formattedStartDate = playlistStartDate ? new Date(playlistStartDate).toISOString() : null;
         const formattedEndDate = playlistEndDate ? new Date(playlistEndDate).toISOString() : null;
         
-        // Try to get heightCalibration and paymentAmount using raw SQL (columns might not exist yet)
+        // Try to get heightCalibration, paymentAmount, and logoUrl using raw SQL (columns might not exist yet)
         let heightCalibration = 0;
         let paymentAmount = null;
+        let logoUrl = null;
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "heightCalibration", "paymentAmount" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+                SELECT "heightCalibration", "paymentAmount", "logoUrl" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
             `;
             if (configResult && configResult.length > 0) {
                 if (configResult[0].heightCalibration !== null && configResult[0].heightCalibration !== undefined) {
@@ -138,6 +149,9 @@ exports.getPlayer = async (req, res) => {
                 }
                 if (configResult[0].paymentAmount !== null && configResult[0].paymentAmount !== undefined) {
                     paymentAmount = configResult[0].paymentAmount;
+                }
+                if (configResult[0].logoUrl !== null && configResult[0].logoUrl !== undefined) {
+                    logoUrl = configResult[0].logoUrl;
                 }
             }
         } catch (e) {
@@ -167,7 +181,8 @@ exports.getPlayer = async (req, res) => {
                 updatedAt: player.updatedAt,
                 playlistId: playlistId,
                 playlistStartDate: formattedStartDate,
-                playlistEndDate: formattedEndDate
+                playlistEndDate: formattedEndDate,
+                logoUrl: logoUrl
             }
         });
     } catch (e) {
@@ -410,13 +425,135 @@ exports.getPlayerByCode = async (req, res) => {
 };
 
 /**
+ * Upload logo for screen
+ * POST /api/adscape/player/:screenId/logo
+ */
+exports.uploadLogo = async (req, res) => {
+    try {
+        const { screenId } = req.params;
+        
+        if (!req.file) {
+            return res.status(400).json({ error: 'No logo file provided' });
+        }
+
+        // Check if player exists
+        const player = await prisma.adscapePlayer.findUnique({
+            where: { screenId: String(screenId) }
+        });
+
+        if (!player) {
+            return res.status(404).json({ error: 'Player not found' });
+        }
+
+        // Delete old logo from Cloudinary if exists
+        if (player.logoUrl) {
+            try {
+                // Extract public_id from Cloudinary URL
+                const urlParts = player.logoUrl.split('/');
+                const filename = urlParts[urlParts.length - 1].split('.')[0];
+                const folder = 'well2day-logos';
+                const publicId = `${folder}/${filename}`;
+                await cloudinary.uploader.destroy(publicId);
+                console.log('[ADSCAPE] Old logo deleted from Cloudinary:', publicId);
+            } catch (deleteError) {
+                console.error('[ADSCAPE] Error deleting old logo:', deleteError);
+                // Continue even if deletion fails
+            }
+        }
+
+        // Upload new logo to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+            cloudinary.uploader.upload_stream(
+                {
+                    folder: 'well2day-logos',
+                    resource_type: 'image',
+                    use_filename: true,
+                    unique_filename: true,
+                    overwrite: false,
+                },
+                (error, result) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(result);
+                    }
+                }
+            ).end(req.file.buffer);
+        });
+
+        // Update player with logo URL
+        const updatedPlayer = await prisma.adscapePlayer.update({
+            where: { screenId: String(screenId) },
+            data: {
+                logoUrl: uploadResult.secure_url,
+                updatedAt: new Date()
+            }
+        });
+
+        console.log('[ADSCAPE] Logo uploaded for screen:', screenId);
+
+        return res.json({
+            ok: true,
+            logoUrl: uploadResult.secure_url,
+            player: {
+                screenId: updatedPlayer.screenId,
+                logoUrl: updatedPlayer.logoUrl
+            }
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Upload logo error:', error);
+        return res.status(500).json({ error: 'Failed to upload logo' });
+    }
+};
+
+/**
+ * Get logo for screen
+ * GET /api/adscape/player/:screenId/logo
+ */
+exports.getLogo = async (req, res) => {
+    try {
+        const { screenId } = req.params;
+        
+        // Use raw SQL to fetch logoUrl (column might not exist in older schemas)
+        let logoUrl = null;
+        try {
+            const logoResult = await prisma.$queryRaw`
+                SELECT "logoUrl" 
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
+            `;
+            if (logoResult && logoResult.length > 0) {
+                logoUrl = logoResult[0].logoUrl || null;
+            }
+        } catch (e) {
+            // Column doesn't exist yet or error, return 404
+            console.log('[ADSCAPE] Logo column might not exist yet or error:', e.message);
+            return res.status(404).json({ ok: false, error: 'Logo not found' });
+        }
+
+        if (!logoUrl) {
+            return res.status(404).json({ ok: false, error: 'Logo not found' });
+        }
+
+        return res.json({
+            ok: true,
+            logoUrl: logoUrl
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Get logo error:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to get logo' });
+    }
+};
+
+/**
  * Update screen configuration
  * PUT /api/adscape/player/:screenId/config
  */
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, heightCalibration, paymentAmount, playlistId, playlistStartDate, playlistEndDate } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, paymentAmount, playlistId, playlistStartDate, playlistEndDate, logoUrl } = req.body || {};
         
         console.log('[ADSCAPE] Update screen config request:', { 
             screenId, 
@@ -891,6 +1028,23 @@ exports.updateScreenConfig = async (req, res, io) => {
             heightCalibrationValue = 0;
         }
         
+        // Get logoUrl from player
+        let logoUrlValue = null;
+        try {
+            const logoResult = await prisma.$queryRaw`
+                SELECT "logoUrl" 
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
+            `;
+            if (logoResult && logoResult.length > 0) {
+                logoUrlValue = logoResult[0].logoUrl || null;
+            }
+        } catch (e) {
+            // Column doesn't exist yet or error, use null
+            logoUrlValue = null;
+        }
+
         return res.json({
             ok: true,
             player: {
@@ -903,7 +1057,8 @@ exports.updateScreenConfig = async (req, res, io) => {
                 heightCalibration: heightCalibrationValue,
                 playlistId: currentPlaylistId,
                 playlistStartDate: formattedStartDate,
-                playlistEndDate: formattedEndDate
+                playlistEndDate: formattedEndDate,
+                logoUrl: logoUrlValue
             }
         });
     } catch (e) {

@@ -378,17 +378,37 @@ exports.getScreenBMIRecords = async (req, res) => {
     const todayEnd = new Date(today);
     todayEnd.setHours(23, 59, 59, 999);
     
+    // Build date filter for where clause
+    const dateFilterObj = {};
+    if (startDate || endDate) {
+      dateFilterObj.timestamp = {};
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        dateFilterObj.timestamp.gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilterObj.timestamp.lte = end;
+      }
+    }
+    
     // Get pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
     
+    // Build where clause
+    const whereClause = {
+      screenId: String(screenId),
+      ...dateFilterObj
+    };
+    
     // Get BMI records for this screen with pagination
     const [bmiRecords, totalCount] = await Promise.all([
       prisma.bMI.findMany({
-        where: {
-          screenId: String(screenId)
-        },
+        where: whereClause,
         include: {
           user: {
             select: {
@@ -405,9 +425,7 @@ exports.getScreenBMIRecords = async (req, res) => {
         skip: skip
       }),
       prisma.bMI.count({
-        where: {
-          screenId: String(screenId)
-        }
+        where: whereClause
       })
     ]);
     
