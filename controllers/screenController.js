@@ -547,6 +547,59 @@ exports.getLogo = async (req, res) => {
 };
 
 /**
+ * Delete logo for screen
+ * DELETE /api/adscape/player/:screenId/logo
+ */
+exports.deleteLogo = async (req, res) => {
+    try {
+        const { screenId } = req.params;
+        
+        // Check if player exists
+        const player = await prisma.adscapePlayer.findUnique({
+            where: { screenId: String(screenId) }
+        });
+
+        if (!player) {
+            return res.status(404).json({ ok: false, error: 'Player not found' });
+        }
+
+        // Delete logo from Cloudinary if exists
+        if (player.logoUrl) {
+            try {
+                // Extract public_id from Cloudinary URL
+                const urlParts = player.logoUrl.split('/');
+                const filename = urlParts[urlParts.length - 1].split('.')[0];
+                const folder = 'well2day-logos';
+                const publicId = `${folder}/${filename}`;
+                await cloudinary.uploader.destroy(publicId);
+                console.log('[ADSCAPE] Logo deleted from Cloudinary:', publicId);
+            } catch (deleteError) {
+                console.error('[ADSCAPE] Error deleting logo from Cloudinary:', deleteError);
+                // Continue even if deletion fails - we'll still remove the URL from database
+            }
+        }
+
+        // Update player to remove logoUrl
+        const updatedPlayer = await prisma.adscapePlayer.update({
+            where: { screenId: String(screenId) },
+            data: { logoUrl: null, updatedAt: new Date() }
+        });
+
+        return res.json({
+            ok: true,
+            message: 'Logo deleted successfully',
+            player: {
+                screenId: updatedPlayer.screenId,
+                logoUrl: null
+            }
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Delete logo error:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to delete logo' });
+    }
+};
+
+/**
  * Update screen configuration
  * PUT /api/adscape/player/:screenId/config
  */

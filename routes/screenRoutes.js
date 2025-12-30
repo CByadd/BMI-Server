@@ -50,6 +50,9 @@ module.exports = (io) => {
     // Get logo for screen (no auth required for Android app)
     router.get('/adscape/player/:screenId/logo', screenController.getLogo);
 
+    // Delete logo for screen (require auth and screen access)
+    router.delete('/adscape/player/:screenId/logo', authenticateToken, checkScreenAccess, screenController.deleteLogo);
+
     // Update screen configuration (require auth and screen access)
     router.put('/adscape/player/:screenId/config', authenticateToken, checkScreenAccess, (req, res) => 
         screenController.updateScreenConfig(req, res, io)
