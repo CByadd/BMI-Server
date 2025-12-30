@@ -70,10 +70,17 @@ exports.createOrder = async (req, res) => {
       });
     }
 
+    // Validate and truncate receipt to max 40 characters (Razorpay requirement)
+    let receiptValue = receipt || `rcpt${Date.now()}`;
+    if (receiptValue.length > 40) {
+      console.warn(`[RAZORPAY] Receipt too long (${receiptValue.length} chars), truncating to 40 chars`);
+      receiptValue = receiptValue.substring(0, 40);
+    }
+
     const options = {
       amount: amountInPaise,
       currency: currency,
-      receipt: receipt || `receipt_${Date.now()}`,
+      receipt: receiptValue,
       notes: notes || {},
     };
 
