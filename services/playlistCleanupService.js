@@ -24,6 +24,25 @@ async function cleanupExpiredPlaylists() {
     try {
         console.log('[PLAYLIST_CLEANUP] Starting cleanup of expired playlist assignments...');
         
+        // Ensure screen_playlists table exists before querying
+        try {
+            await prisma.$executeRawUnsafe(`
+                CREATE TABLE IF NOT EXISTS screen_playlists (
+                    screen_id VARCHAR(64) PRIMARY KEY,
+                    playlist_id VARCHAR(255),
+                    start_date TIMESTAMP,
+                    end_date TIMESTAMP,
+                    assigned_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            `);
+        } catch (createError) {
+            // Table might already exist, which is fine
+            if (!createError.message?.includes('already exists')) {
+                console.warn('[PLAYLIST_CLEANUP] Warning: Could not ensure table exists:', createError.message);
+            }
+        }
+        
         // Get current timestamp
         const now = new Date();
         
@@ -71,6 +90,11 @@ async function cleanupExpiredPlaylists() {
         
         return results;
     } catch (error) {
+        // Handle table not found errors gracefully
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+            console.log('[PLAYLIST_CLEANUP] Table screen_playlists does not exist, skipping cleanup (this is normal if no playlists have been assigned)');
+            return results;
+        }
         console.error('[PLAYLIST_CLEANUP] Fatal error during cleanup:', error);
         results.errors++;
         return results;
