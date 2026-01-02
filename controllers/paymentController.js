@@ -140,35 +140,21 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    // In mock mode, always verify successfully if order exists
-    const orderData = mockOrderStore.get(razorpay_order_id);
-    
-    if (orderData) {
-      // Mark order as paid
-      orderData.status = 'paid';
-      orderData.payment_id = razorpay_payment_id;
-      orderData.paidAt = Date.now();
-      
-      console.log('[PAYMENT] 🧪 MOCK: Payment verified successfully:', {
-        order_id: razorpay_order_id,
-        payment_id: razorpay_payment_id
-      });
+    // SIMPLE MOCK: Always verify successfully - no store check needed
+    // This works in serverless environments where in-memory store doesn't persist
+    console.log('[PAYMENT] 🧪 MOCK: Simple mock mode - accepting all payments');
+    console.log('[PAYMENT] 🧪 MOCK: Payment verified successfully:', {
+      order_id: razorpay_order_id,
+      payment_id: razorpay_payment_id
+    });
 
-      res.json({
-        ok: true,
-        verified: true,
-        payment_id: razorpay_payment_id,
-        order_id: razorpay_order_id,
-        mockMode: true
-      });
-    } else {
-      console.log('[PAYMENT] 🧪 MOCK: Order not found:', razorpay_order_id);
-      res.status(400).json({
-        ok: false,
-        verified: false,
-        error: 'Order not found',
-      });
-    }
+    return res.json({
+      ok: true,
+      verified: true,
+      payment_id: razorpay_payment_id,
+      order_id: razorpay_order_id,
+      mockMode: true
+    });
 
     // ============================================
     // RAZORPAY IMPLEMENTATION (COMMENTED OUT)
