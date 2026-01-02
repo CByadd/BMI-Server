@@ -425,26 +425,45 @@ async function validateOTP(msisdn, otp) {
       };
     }
 
+    // MOCK MODE BYPASS: If mock mode is enabled and OTP is "000000", accept it immediately
+    // This works even if OTP wasn't stored (useful for serverless environments where in-memory store doesn't persist)
+    if (OTP_MOCK_MODE && otp === MOCK_OTP) {
+      console.log('[OTP] 🧪 MOCK MODE: Bypassing OTP store check - accepting mock OTP "000000"');
+      console.log('[OTP] 🧪 MOCK MODE: OTP validated successfully for mobile:', finalMsisdn);
+      return {
+        success: true,
+        isMock: true
+      };
+    }
+
     // Debug: Log all stored OTPs
     console.log('[OTP] Validate OTP - Looking for OTP:', { 
       msisdn: finalMsisdn, 
       otp: otp,
       storedKeys: Array.from(otpStore.keys()),
-      storeSize: otpStore.size
+      storeSize: otpStore.size,
+      mockMode: OTP_MOCK_MODE
     });
 
     // Get stored OTP data
     const otpData = otpStore.get(finalMsisdn);
 
     if (!otpData) {
+      // If mock mode is enabled, suggest using 000000
+      const errorMessage = OTP_MOCK_MODE 
+        ? 'OTP not found. In mock mode, use OTP "000000" to verify.'
+        : 'OTP not found. Please request a new OTP.';
+      
       console.log('[OTP] Validate OTP - OTP not found in store:', { 
         lookupKey: finalMsisdn,
         allKeys: Array.from(otpStore.keys()),
-        storeSize: otpStore.size
+        storeSize: otpStore.size,
+        mockMode: OTP_MOCK_MODE,
+        providedOtp: otp
       });
       return {
         success: false,
-        error: 'OTP not found. Please request a new OTP.',
+        error: errorMessage,
         errorCode: 'OTP_NOT_FOUND'
       };
     }
