@@ -296,8 +296,10 @@ exports.paymentSuccess = async (req, res, io) => {
             include: { user: true, screen: true }
         });
         
-        // Generate fortune immediately for F1/F3 flow (non-F2 versions)
+        // Normalize appVersion for consistent comparison (case-insensitive)
         const normalizedAppVersion = appVersion ? String(appVersion).toLowerCase() : '';
+        
+        // Generate fortune immediately for F1/F3 flow (non-F2 versions)
         if (normalizedAppVersion !== 'f2') {
             console.log('[PAYMENT] F1/F3 Flow: Generating fortune immediately (appVersion:', appVersion, ')');
             const fortuneMessage = await generateFortuneMessage({
@@ -315,8 +317,6 @@ exports.paymentSuccess = async (req, res, io) => {
         }
         
        // Emit payment success to Android screen (only for non-F2 versions)
-        // Check if appVersion is F2 (case-insensitive), otherwise emit to Android
-        const normalizedAppVersion = appVersion ? String(appVersion).toLowerCase() : '';
         if (normalizedAppVersion !== 'f2' && io) {
             io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', {
                 bmiId: updatedBMI.id,
