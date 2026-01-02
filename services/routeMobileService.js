@@ -62,6 +62,23 @@ if (OTP_MOCK_MODE) {
 }
 
 /**
+ * Normalize mobile number to 10 digits (removes country code if present)
+ * @param {string} msisdn - Mobile number (any format)
+ * @returns {string} Normalized 10-digit mobile number
+ */
+function normalizeMobileNumber(msisdn) {
+  // Remove all non-digits
+  let cleaned = msisdn.replace(/\D/g, '');
+  
+  // Remove country code if present (91 for India)
+  if (cleaned.startsWith('91') && cleaned.length === 12) {
+    cleaned = cleaned.substring(2);
+  }
+  
+  return cleaned;
+}
+
+/**
  * Generate a random numeric OTP
  * @param {number} length - Length of OTP
  * @returns {string} Generated OTP
@@ -89,21 +106,19 @@ async function generateOTP(msisdn) {
       };
     }
 
-    // Validate mobile number (should be 10 digits)
-    let cleanMsisdn = msisdn.replace(/\D/g, ''); // Remove non-digits
-    
-    // Remove country code if present (91 for India)
-    if (cleanMsisdn.startsWith('91') && cleanMsisdn.length === 12) {
-      cleanMsisdn = cleanMsisdn.substring(2);
-    }
+    // Normalize mobile number to 10 digits
+    const cleanMsisdn = normalizeMobileNumber(msisdn);
     
     if (cleanMsisdn.length !== 10) {
+      console.log('[OTP] Generate OTP - Invalid mobile number:', { original: msisdn, cleaned: cleanMsisdn, length: cleanMsisdn.length });
       return {
         success: false,
         error: 'Invalid mobile number. Must be 10 digits.',
         errorCode: 'INVALID_MSISDN'
       };
     }
+    
+    console.log('[OTP] Generate OTP - Mobile number normalized:', { original: msisdn, normalized: cleanMsisdn });
     
     // Add country code 91 (India) for Route Mobile API
     // Some carriers require country code prefix
@@ -120,6 +135,15 @@ async function generateOTP(msisdn) {
       attempts: 0,
       createdAt: Date.now(),
       isMock: OTP_MOCK_MODE
+    });
+    
+    console.log('[OTP] Generate OTP - OTP stored:', {
+      mobile: cleanMsisdn,
+      otp: otp,
+      isMock: OTP_MOCK_MODE,
+      expiresAt: new Date(expiresAt).toISOString(),
+      storeSize: otpStore.size,
+      allKeys: Array.from(otpStore.keys())
     });
 
     // If mock mode, skip SMS sending and return success immediately
@@ -377,18 +401,23 @@ async function generateOTP(msisdn) {
  */
 async function validateOTP(msisdn, otp) {
   try {
-    // Validate mobile number
-    const cleanMsisdn = msisdn.replace(/\D/g, '');
-    if (cleanMsisdn.length !== 10) {
+    // Normalize mobile number to 10 digits (same as generateOTP)
+    const finalMsisdn = normalizeMobileNumber(msisdn);
+    
+    if (finalMsisdn.length !== 10) {
+      console.log('[OTP] Validate OTP - Invalid mobile number length:', { original: msisdn, normalized: finalMsisdn, length: finalMsisdn.length });
       return {
         success: false,
         error: 'Invalid mobile number',
         errorCode: 'INVALID_MSISDN'
       };
     }
+    
+    console.log('[OTP] Validate OTP - Mobile number normalized:', { original: msisdn, normalized: finalMsisdn });
 
     // Validate OTP (should be numeric)
     if (!/^\d+$/.test(otp)) {
+      console.log('[OTP] Validate OTP - Invalid OTP format:', { otp });
       return {
         success: false,
         error: 'OTP must be numeric',
@@ -396,20 +425,44 @@ async function validateOTP(msisdn, otp) {
       };
     }
 
+    // Debug: Log all stored OTPs
+    console.log('[OTP] Validate OTP - Looking for OTP:', { 
+      msisdn: finalMsisdn, 
+      otp: otp,
+      storedKeys: Array.from(otpStore.keys()),
+      storeSize: otpStore.size
+    });
+
     // Get stored OTP data
-    const otpData = otpStore.get(cleanMsisdn);
+    const otpData = otpStore.get(finalMsisdn);
 
     if (!otpData) {
+      console.log('[OTP] Validate OTP - OTP not found in store:', { 
+        lookupKey: finalMsisdn,
+        allKeys: Array.from(otpStore.keys()),
+        storeSize: otpStore.size
+      });
       return {
         success: false,
         error: 'OTP not found. Please request a new OTP.',
         errorCode: 'OTP_NOT_FOUND'
       };
     }
+    
+    console.log('[OTP] Validate OTP - Found OTP data:', {
+      storedOtp: otpData.otp,
+      providedOtp: otp,
+      match: otpData.otp === otp,
+      isMock: otpData.isMock,
+      expiresAt: new Date(otpData.expiresAt).toISOString(),
+      now: new Date().toISOString(),
+      expired: Date.now() > otpData.expiresAt
+    });
 
     // Check if OTP has expired
     if (Date.now() > otpData.expiresAt) {
-      otpStore.delete(cleanMsisdn);
+      otpStore.delete(finalMsisdn);
+      console.log('[OTP] Validate OTP - OTP expired');
       return {
         success: false,
         error: 'OTP has expired. Please request a new OTP.',
@@ -419,7 +472,8 @@ async function validateOTP(msisdn, otp) {
 
     // Check attempts (prevent brute force)
     if (otpData.attempts >= 5) {
-      otpStore.delete(cleanMsisdn);
+      otpStore.delete(finalMsisdn);
+      console.log('[OTP] Validate OTP - Too many attempts');
       return {
         success: false,
         error: 'Too many failed attempts. Please request a new OTP.',
@@ -430,6 +484,11 @@ async function validateOTP(msisdn, otp) {
     // Validate OTP
     if (otpData.otp !== otp) {
       otpData.attempts += 1;
+      console.log('[OTP] Validate OTP - OTP mismatch:', {
+        storedOtp: otpData.otp,
+        providedOtp: otp,
+        attempts: otpData.attempts
+      });
       return {
         success: false,
         error: 'Invalid OTP. Please try again.',
@@ -438,7 +497,7 @@ async function validateOTP(msisdn, otp) {
     }
 
     // OTP is valid - remove from store
-    otpStore.delete(cleanMsisdn);
+    otpStore.delete(finalMsisdn);
 
     console.log('[OTP] OTP validated successfully:', {
       msisdn: cleanMsisdn
