@@ -296,9 +296,10 @@ exports.paymentSuccess = async (req, res, io) => {
             include: { user: true, screen: true }
         });
         
-        // Generate fortune immediately for F1 flow
-        if (appVersion !== 'f2') {
-            console.log('[PAYMENT] F1 Flow: Generating fortune immediately');
+        // Generate fortune immediately for F1/F3 flow (non-F2 versions)
+        const normalizedAppVersion = appVersion ? String(appVersion).toLowerCase() : '';
+        if (normalizedAppVersion !== 'f2') {
+            console.log('[PAYMENT] F1/F3 Flow: Generating fortune immediately (appVersion:', appVersion, ')');
             const fortuneMessage = await generateFortuneMessage({
                 bmi: updatedBMI.bmi,
                 category: updatedBMI.category
@@ -310,11 +311,13 @@ exports.paymentSuccess = async (req, res, io) => {
                 data: { fortune: fortuneMessage }
             });
             
-            console.log('[PAYMENT] F1 Flow: Fortune generated and stored:', fortuneMessage);
+            console.log('[PAYMENT] F1/F3 Flow: Fortune generated and stored:', fortuneMessage);
         }
         
        // Emit payment success to Android screen (only for non-F2 versions)
-        if (appVersion !== 'f2' && io) {
+        // Check if appVersion is F2 (case-insensitive), otherwise emit to Android
+        const normalizedAppVersion = appVersion ? String(appVersion).toLowerCase() : '';
+        if (normalizedAppVersion !== 'f2' && io) {
             io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', {
                 bmiId: updatedBMI.id,
                 screenId: updatedBMI.screenId,
@@ -326,9 +329,9 @@ exports.paymentSuccess = async (req, res, io) => {
                 weight: updatedBMI.weightKg,
                 timestamp: updatedBMI.timestamp.toISOString()
             });
-            console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId);
+            console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId, 'appVersion:', appVersion);
         } else {
-            console.log('[PAYMENT] F2 version - skipping socket emission to Android');
+            console.log('[PAYMENT] F2 version or missing appVersion - skipping socket emission to Android. appVersion:', appVersion);
         }
         
         return res.json({ ok: true, message: 'Payment processed successfully' });
