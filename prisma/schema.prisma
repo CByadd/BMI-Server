@@ -29,6 +29,7 @@ model AdscapePlayer {
   paymentAmount     Float? // Payment amount in currency (e.g., 9.0 for ₹9)
   logoUrl           String?  @db.Text // Logo URL stored in Cloudinary
   playlistId        String?  @db.VarChar(255) // Playlist ID assigned to this screen
+  flowDrawerEnabled Boolean? @default(true) // Enable/disable drawer shown when flow is active
   lastSeen          DateTime @default(now())
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
