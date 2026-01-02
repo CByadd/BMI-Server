@@ -347,6 +347,14 @@ setInterval(() => {
     // For now, this is a placeholder - Android devices will handle their own cleanup
 }, ASSET_CLEANUP_INTERVAL);
 
+// Playlist Cleanup Service - Scheduled task to clear expired playlist assignments
+const playlistCleanupService = require('./services/playlistCleanupService');
+
+// Start playlist cleanup service (runs every hour by default)
+// This will automatically delete playlist assignments that have expired (end_date < current time)
+const PLAYLIST_CLEANUP_INTERVAL_MINUTES = parseInt(process.env.PLAYLIST_CLEANUP_INTERVAL_MINUTES || '60', 10);
+playlistCleanupService.startPlaylistCleanupService(PLAYLIST_CLEANUP_INTERVAL_MINUTES);
+
 // API endpoint for asset cleanup (can be called by Android devices or manually)
 app.post('/api/assets/cleanup', async (req, res) => {
     try {

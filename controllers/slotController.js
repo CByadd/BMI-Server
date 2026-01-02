@@ -67,43 +67,26 @@ exports.getAssetsByScreen = async (req, res) => {
 
     // First, check if screen has a playlist assigned
     let playlistId = null;
-    let playlistStartDate = null;
-    let playlistEndDate = null;
     
     try {
       const playlistResult = await prisma.$queryRaw`
-        SELECT playlist_id, start_date, end_date 
-        FROM screen_playlists 
-        WHERE screen_id = ${String(screen_id)}
+        SELECT "playlistId" 
+        FROM "AdscapePlayer" 
+        WHERE "screenId" = ${String(screen_id)} 
+        LIMIT 1
       `;
       
       if (playlistResult && playlistResult.length > 0) {
-        playlistId = playlistResult[0].playlist_id;
-        playlistStartDate = playlistResult[0].start_date;
-        playlistEndDate = playlistResult[0].end_date;
-        console.log('[ASSETS] Found playlist assignment:', { playlistId, playlistStartDate, playlistEndDate });
+        playlistId = playlistResult[0].playlistId || null;
+        console.log('[ASSETS] Found playlist assignment:', { playlistId });
       }
     } catch (e) {
-      // Table might not exist, that's okay
-      console.log('[ASSETS] No playlist assignment table or no assignment found');
+      // Column might not exist, that's okay
+      console.log('[ASSETS] No playlist assignment found');
     }
 
-    // Check if we should use playlist assets
-    let usePlaylist = false;
-    if (playlistId) {
-      // Check if target date is within playlist date range
-      const isAfterStart = !playlistStartDate || targetDate >= new Date(playlistStartDate);
-      const isBeforeEnd = !playlistEndDate || targetDate <= new Date(playlistEndDate);
-      usePlaylist = isAfterStart && isBeforeEnd;
-      console.log('[ASSETS] Playlist date check:', { 
-        targetDate, 
-        playlistStartDate, 
-        playlistEndDate, 
-        isAfterStart, 
-        isBeforeEnd, 
-        usePlaylist 
-      });
-    }
+    // Check if we should use playlist assets (if playlistId is assigned, always use it)
+    const usePlaylist = !!playlistId;
 
     if (usePlaylist) {
       // Get assets from playlist
