@@ -141,19 +141,23 @@ exports.getPlayer = async (req, res) => {
             }
         }
         
-        // Get playlistId, heightCalibration, paymentAmount, and logoUrl using raw SQL (columns might not exist yet)
+        // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, and logoUrl using raw SQL (columns might not exist yet)
         let playlistId = null;
         let heightCalibration = 0;
+        let heightCalibrationEnabled = true;
         let paymentAmount = null;
         let logoUrl = null;
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "playlistId", "heightCalibration", "paymentAmount", "logoUrl" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
             `;
             if (configResult && configResult.length > 0) {
                 playlistId = configResult[0].playlistId || null;
                 if (configResult[0].heightCalibration !== null && configResult[0].heightCalibration !== undefined) {
                     heightCalibration = configResult[0].heightCalibration;
+                }
+                if (configResult[0].heightCalibrationEnabled !== null && configResult[0].heightCalibrationEnabled !== undefined) {
+                    heightCalibrationEnabled = Boolean(configResult[0].heightCalibrationEnabled);
                 }
                 if (configResult[0].paymentAmount !== null && configResult[0].paymentAmount !== undefined) {
                     paymentAmount = configResult[0].paymentAmount;
@@ -181,6 +185,7 @@ exports.getPlayer = async (req, res) => {
                 osVersion: player.osVersion,
                 appVersionCode: player.appVersionCode,
                 heightCalibration: heightCalibration,
+                heightCalibrationEnabled: heightCalibrationEnabled,
                 paymentAmount: paymentAmount,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
@@ -612,7 +617,7 @@ exports.deleteLogo = async (req, res) => {
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, heightCalibration, paymentAmount, playlistId, logoUrl } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl } = req.body || {};
         
         console.log('[ADSCAPE] Update screen config request:', { 
             screenId, 
@@ -652,6 +657,10 @@ exports.updateScreenConfig = async (req, res, io) => {
             }
         }
         
+        if (heightCalibrationEnabled !== undefined) {
+            updateData.heightCalibrationEnabled = Boolean(heightCalibrationEnabled);
+        }
+        
         if (paymentAmount !== undefined) {
             // Allow null or empty string to clear the payment amount
             if (paymentAmount === null || paymentAmount === undefined || paymentAmount === "") {
@@ -672,16 +681,18 @@ exports.updateScreenConfig = async (req, res, io) => {
         // Update player config
         let player = null;
         if (Object.keys(updateData).length > 0) {
-            // Check if heightCalibration or paymentAmount is in updateData - if so, use raw SQL to update them
+            // Check if heightCalibration, heightCalibrationEnabled, or paymentAmount is in updateData - if so, use raw SQL to update them
             // (This is a workaround until Prisma client is regenerated on Vercel)
             const hasHeightCalibration = 'heightCalibration' in updateData;
+            const hasHeightCalibrationEnabled = 'heightCalibrationEnabled' in updateData;
             const hasPaymentAmount = 'paymentAmount' in updateData;
             const heightCalibrationValue = updateData.heightCalibration;
+            const heightCalibrationEnabledValue = updateData.heightCalibrationEnabled;
             const paymentAmountValue = updateData.paymentAmount;
             
-            if (hasHeightCalibration || hasPaymentAmount) {
-                // Remove heightCalibration and paymentAmount from updateData for Prisma update
-                const { heightCalibration, paymentAmount, ...prismaUpdateData } = updateData;
+            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount) {
+                // Remove heightCalibration, heightCalibrationEnabled, and paymentAmount from updateData for Prisma update
+                const { heightCalibration, heightCalibrationEnabled, paymentAmount, ...prismaUpdateData } = updateData;
                 
                 // Update other fields with Prisma if there are any
                 if (Object.keys(prismaUpdateData).length > 0) {
@@ -730,6 +741,33 @@ exports.updateScreenConfig = async (req, res, io) => {
                             await prisma.$executeRaw`
                                 UPDATE "AdscapePlayer"
                                 SET "heightCalibration" = ${heightCalibrationValue}
+                                WHERE "screenId" = ${String(screenId)}
+                            `;
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+                
+                if (hasHeightCalibrationEnabled) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "heightCalibrationEnabled" = ${heightCalibrationEnabledValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        // Column doesn't exist, create it first
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            console.log('[ADSCAPE] heightCalibrationEnabled column does not exist, creating it...');
+                            await prisma.$executeRawUnsafe(`
+                                ALTER TABLE "AdscapePlayer" 
+                                ADD COLUMN IF NOT EXISTS "heightCalibrationEnabled" BOOLEAN DEFAULT true
+                            `);
+                            // Now update it
+                            await prisma.$executeRaw`
+                                UPDATE "AdscapePlayer"
+                                SET "heightCalibrationEnabled" = ${heightCalibrationEnabledValue}
                                 WHERE "screenId" = ${String(screenId)}
                             `;
                         } else {
