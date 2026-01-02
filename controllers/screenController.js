@@ -34,23 +34,50 @@ exports.registerPlayer = async (req, res) => {
             return res.status(400).json({ error: 'screenId and appVersion required' });
         }
         
+        // Check if player already exists to preserve admin-configured values
+        const existingPlayer = await prisma.adscapePlayer.findUnique({
+            where: { screenId: String(screenId) }
+        });
+        
+        // Preserve admin-configured deviceName and location if they exist
+        // Device registration should NOT overwrite admin-configured values
+        const updateData = {
+            appVersion: String(appVersion),
+            ...(flowType !== undefined && flowType !== null ? { flowType: String(flowType) } : {}),
+            screenWidth: screenWidth ? Number(screenWidth) : null,
+            screenHeight: screenHeight ? Number(screenHeight) : null,
+            ipAddress: ipAddress ? String(ipAddress) : null,
+            osVersion: osVersion ? String(osVersion) : null,
+            appVersionCode: appVersionCode ? String(appVersionCode) : null,
+            lastSeen: new Date(),
+            isActive: true,
+            updatedAt: new Date()
+        };
+        
+        // Preserve admin-configured deviceName - only update if not already set
+        if (existingPlayer && existingPlayer.deviceName && existingPlayer.deviceName.trim() !== '') {
+            // Admin has configured a deviceName, preserve it (don't overwrite with device-sent value)
+            updateData.deviceName = existingPlayer.deviceName;
+            console.log('[ADSCAPE] Preserving admin-configured deviceName:', existingPlayer.deviceName);
+        } else {
+            // No existing deviceName, use incoming value (or null)
+            updateData.deviceName = deviceName ? String(deviceName) : null;
+        }
+        
+        // Preserve admin-configured location - only update if not already set
+        if (existingPlayer && existingPlayer.location && existingPlayer.location.trim() !== '') {
+            // Admin has configured a location, preserve it (don't overwrite with device-sent value)
+            updateData.location = existingPlayer.location;
+            console.log('[ADSCAPE] Preserving admin-configured location:', existingPlayer.location);
+        } else {
+            // No existing location, use incoming value (or null)
+            updateData.location = location ? String(location) : null;
+        }
+        
         // Upsert Adscape player registration
         const player = await prisma.adscapePlayer.upsert({
             where: { screenId: String(screenId) },
-            update: {
-                appVersion: String(appVersion),
-                ...(flowType !== undefined && flowType !== null ? { flowType: String(flowType) } : {}),
-                deviceName: deviceName ? String(deviceName) : null,
-                screenWidth: screenWidth ? Number(screenWidth) : null,
-                screenHeight: screenHeight ? Number(screenHeight) : null,
-                ipAddress: ipAddress ? String(ipAddress) : null,
-                location: location ? String(location) : null,
-                osVersion: osVersion ? String(osVersion) : null,
-                appVersionCode: appVersionCode ? String(appVersionCode) : null,
-                lastSeen: new Date(),
-                isActive: true,
-                updatedAt: new Date()
-            },
+            update: updateData,
             create: {
                 screenId: String(screenId),
                 appVersion: String(appVersion),
