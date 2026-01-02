@@ -230,16 +230,17 @@ exports.generateOTP = async (req, res) => {
 
     // Return success response with server confirmation
     // Server response format: "1701|919443932288:message-id" means message was submitted successfully
+    const isMock = result.mockMode || result.isMock || false;
     res.json({
       success: true,
-      message: result.mockMode ? 'OTP generated (Mock Mode - use 000000)' : 'OTP sent successfully',
+      message: isMock ? 'OTP generated (Mock Mode - use 000000)' : 'OTP sent successfully',
       messageId: result.messageId,
       serverResponse: result.response, // Full server response: "1701|919443932288:message-id"
       verified: result.verified || false, // Server confirmed message submission
       cellNumber: result.cellNumber,
-      mockMode: result.mockMode || false, // Indicates if mock mode was used
-      otp: result.mockMode ? '000000' : undefined, // Show OTP in mock mode for testing
-      note: result.mockMode 
+      mockMode: isMock, // Indicates if mock mode was used
+      otp: isMock ? '000000' : undefined, // Show OTP in mock mode for testing
+      note: isMock 
         ? '🧪 MOCK MODE: Use OTP "000000" to verify. No SMS was sent.'
         : (result.response 
           ? `Server confirmed: ${result.response}. If SMS not received, check: 1) Sender ID approval, 2) DND status, 3) Network connectivity`
@@ -315,6 +316,17 @@ exports.verifyOTP = async (req, res) => {
           success: false,
           error: 'User not found. Please provide name for registration.'
         });
+      } else if (user && name && name.trim()) {
+        // User exists - update name if provided and different
+        const trimmedName = name.trim();
+        if (user.name !== trimmedName) {
+          const oldName = user.name;
+          user = await prisma.user.update({
+            where: { id: user.id },
+            data: { name: trimmedName }
+          });
+          console.log('[OTP] Updated user name:', { userId: user.id, oldName, newName: trimmedName });
+        }
       }
 
       // Generate JWT token

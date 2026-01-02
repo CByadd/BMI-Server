@@ -126,6 +126,8 @@ async function generateOTP(msisdn) {
     if (OTP_MOCK_MODE) {
       console.log('[OTP] 🧪 MOCK MODE: Skipping SMS sending');
       console.log('[OTP] 🧪 MOCK OTP generated:', otp);
+      console.log('[OTP] 🧪 MOCK MODE: OTP stored for mobile:', cleanMsisdn);
+      console.log('[OTP] 🧪 MOCK MODE: OTP expires at:', new Date(expiresAt).toISOString());
       console.log('[OTP] 🧪 Use OTP "000000" to verify');
       
       return {
@@ -135,25 +137,9 @@ async function generateOTP(msisdn) {
         response: `1701|${destinationWithCountryCode}:MOCK-MESSAGE-ID`,
         cellNumber: destinationWithCountryCode,
         verified: true,
+        mockMode: true,
         isMock: true,
         mockOtp: MOCK_OTP
-      };
-    }
-
-    // If mock mode, skip SMS sending and return success immediately
-    if (OTP_MOCK_MODE) {
-      console.log('[OTP] 🧪 MOCK MODE: Skipping SMS send, using OTP:', otp);
-      console.log('[OTP] 🧪 MOCK MODE: OTP stored for mobile:', cleanMsisdn);
-      console.log('[OTP] 🧪 MOCK MODE: OTP expires at:', new Date(expiresAt).toISOString());
-      
-      return {
-        success: true,
-        messageId: 'MOCK-' + Date.now(),
-        msisdn: cleanMsisdn,
-        response: '1701|' + destinationWithCountryCode + ':MOCK-MESSAGE-ID',
-        cellNumber: destinationWithCountryCode,
-        verified: true,
-        mockMode: true
       };
     }
 
