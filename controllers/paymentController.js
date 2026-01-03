@@ -129,6 +129,16 @@ exports.createOrder = async (req, res) => {
 exports.verifyPayment = async (req, res, io, bmiFlowController) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const paymentVerifyTime = new Date().toISOString();
+
+    // ========== PAYMENT FLOW LOGGING - PAYMENT VERIFICATION ==========
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('[PAYMENT_FLOW] 🔐 PAYMENT VERIFICATION STARTED');
+    console.log('[PAYMENT_FLOW] Timestamp:', paymentVerifyTime);
+    console.log('[PAYMENT_FLOW] Order ID:', razorpay_order_id);
+    console.log('[PAYMENT_FLOW] Payment ID:', razorpay_payment_id);
+    console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
+    console.log('═══════════════════════════════════════════════════════════════');
 
     console.log('[PAYMENT] 🧪 MOCK: Verify payment request:', { 
       order_id: razorpay_order_id, 
@@ -186,6 +196,9 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
       
       // Trigger payment success notification if we have both userId and bmiId
       if (bmiId && userId) {
+        console.log('[PAYMENT_FLOW] 🔔 Auto-triggering payment success notification');
+        console.log('[PAYMENT_FLOW] BMI ID:', bmiId);
+        console.log('[PAYMENT_FLOW] User ID:', userId);
         console.log('[PAYMENT] Auto-triggering payment success notification for bmiId:', bmiId, 'userId:', userId);
         try {
           // Call payment success handler directly
@@ -197,18 +210,30 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
             }
           };
           const mockRes = {
-            json: (data) => console.log('[PAYMENT] Auto payment success notification result:', data),
-            status: (code) => ({ json: (data) => console.log('[PAYMENT] Auto payment success notification error:', code, data) })
+            json: (data) => {
+              console.log('[PAYMENT_FLOW] ✅ Payment success notification triggered successfully');
+              console.log('[PAYMENT] Auto payment success notification result:', data);
+            },
+            status: (code) => ({ json: (data) => {
+              console.log('[PAYMENT_FLOW] ❌ Payment success notification failed:', code);
+              console.log('[PAYMENT] Auto payment success notification error:', code, data);
+            }})
           };
           await bmiFlowController.paymentSuccess(mockReq, mockRes, io);
         } catch (notifyError) {
+          console.log('[PAYMENT_FLOW] ❌ Error auto-triggering payment success notification:', notifyError.message);
           console.error('[PAYMENT] Error auto-triggering payment success notification:', notifyError);
           // Don't fail the verification if notification fails
         }
       } else {
+        console.log('[PAYMENT_FLOW] ⚠️ Cannot auto-trigger payment success - missing bmiId or userId');
+        console.log('[PAYMENT_FLOW] BMI ID:', bmiId, 'User ID:', userId);
         console.log('[PAYMENT] Cannot auto-trigger payment success - missing bmiId or userId. bmiId:', bmiId, 'userId:', userId);
       }
     }
+
+    console.log('[PAYMENT_FLOW] ✅ Payment verification completed successfully');
+    console.log('[PAYMENT_FLOW] Verified: true, Payment ID:', razorpay_payment_id, 'Order ID:', razorpay_order_id);
 
     return res.json({
       ok: true,

@@ -162,7 +162,21 @@ function calculateStreak(bmiRecords) {
 exports.createBMI = async (req, res, io) => {
     try {
 		const { heightCm, weightKg, screenId, appVersion } = req.body || {};
+		const flowStartTime = new Date().toISOString();
+		
+		// ========== PAYMENT FLOW LOGGING - FLOW STARTED (SERVER) ==========
+		console.log('═══════════════════════════════════════════════════════════════');
+		console.log('[PAYMENT_FLOW] 🚀 FLOW TRIGGERED - START (SERVER)');
+		console.log('[PAYMENT_FLOW] Timestamp:', flowStartTime);
+		console.log('[PAYMENT_FLOW] Screen ID:', screenId);
+		console.log('[PAYMENT_FLOW] Weight:', weightKg, 'kg');
+		console.log('[PAYMENT_FLOW] Height:', heightCm, 'cm');
+		console.log('[PAYMENT_FLOW] App Version:', appVersion);
+		console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
+		console.log('═══════════════════════════════════════════════════════════════');
+		
 		if (!heightCm || !weightKg || !screenId) {
+			console.log('[PAYMENT_FLOW] ❌ Validation failed - missing required fields');
 			return res.status(400).json({ error: 'heightCm, weightKg, screenId required' });
 		}
 		
@@ -231,6 +245,17 @@ exports.createBMI = async (req, res, io) => {
 		const version = (effectiveFlowType || appVersion || 'f1').toLowerCase();
 		const webUrl = `${clientBase}?screenId=${encodeURIComponent(String(screenId))}&bmiId=${encodeURIComponent(bmiId)}&appVersion=${encodeURIComponent(version)}#server=${encodeURIComponent(apiBase)}`;
 
+        // ========== PAYMENT FLOW LOGGING - BMI CREATED (SERVER) ==========
+        console.log('═══════════════════════════════════════════════════════════════');
+        console.log('[PAYMENT_FLOW] ✅ BMI RECORD CREATED (SERVER)');
+        console.log('[PAYMENT_FLOW] BMI ID:', bmiId);
+        console.log('[PAYMENT_FLOW] BMI:', bmi, '(', category, ')');
+        console.log('[PAYMENT_FLOW] Web URL:', webUrl);
+        console.log('[PAYMENT_FLOW] Effective Flow Type:', effectiveFlowType);
+        console.log('[PAYMENT_FLOW] Fortune Generated:', !!fortune);
+        console.log('[PAYMENT_FLOW] Waiting for payment...');
+        console.log('═══════════════════════════════════════════════════════════════');
+
         // Emit to the Android player room so it can open a modal
         const emitPayload = {
             ...payload,
@@ -238,6 +263,7 @@ exports.createBMI = async (req, res, io) => {
         };
         if (io) {
             io.to(`screen:${String(screenId)}`).emit('bmi-data-received', emitPayload);
+            console.log('[PAYMENT_FLOW] 📡 Emitted bmi-data-received to screen:', screenId);
         }
         console.log('[BMI] created and emitted', emitPayload);
 
@@ -285,7 +311,20 @@ exports.createUser = async (req, res) => {
 exports.paymentSuccess = async (req, res, io) => {
     try {
         const { userId, bmiId, appVersion } = req.body || {};
+        const paymentReceivedTime = new Date().toISOString();
+        
+        // ========== PAYMENT FLOW LOGGING - PAYMENT RECEIVED (SERVER) ==========
+        console.log('═══════════════════════════════════════════════════════════════');
+        console.log('[PAYMENT_FLOW] 💰 PAYMENT COMPLETED - INFO RECEIVED (SERVER)');
+        console.log('[PAYMENT_FLOW] Timestamp:', paymentReceivedTime);
+        console.log('[PAYMENT_FLOW] BMI ID:', bmiId);
+        console.log('[PAYMENT_FLOW] User ID:', userId);
+        console.log('[PAYMENT_FLOW] App Version:', appVersion);
+        console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
+        console.log('═══════════════════════════════════════════════════════════════');
+        
         if (!userId || !bmiId) {
+            console.log('[PAYMENT_FLOW] ❌ Validation failed - missing userId or bmiId');
             return res.status(400).json({ error: 'userId, bmiId required' });
         }
         
@@ -294,6 +333,13 @@ exports.paymentSuccess = async (req, res, io) => {
             where: { id: bmiId },
             data: { userId: userId },
             include: { user: true, screen: true }
+        });
+        
+        console.log('[PAYMENT_FLOW] ✅ BMI record updated with user:', updatedBMI.user?.name || 'Unknown');
+        console.log('[PAYMENT_FLOW] User Details:', {
+            userId: updatedBMI.userId,
+            userName: updatedBMI.user?.name,
+            userMobile: updatedBMI.user?.mobile
         });
         
         // Normalize appVersion for consistent comparison (case-insensitive)
@@ -314,6 +360,7 @@ exports.paymentSuccess = async (req, res, io) => {
             });
             
             console.log('[PAYMENT] F1/F3 Flow: Fortune generated and stored:', fortuneMessage);
+            console.log('[PAYMENT_FLOW] Fortune Message:', fortuneMessage);
         }
         
        // Emit payment success to Android screen (for F1/F3 flows - non-F2 versions)
@@ -330,6 +377,15 @@ exports.paymentSuccess = async (req, res, io) => {
                 weight: updatedBMI.weightKg,
                 timestamp: updatedBMI.timestamp.toISOString()
             };
+            
+            // ========== PAYMENT FLOW LOGGING - EMITTING TO ANDROID ==========
+            console.log('═══════════════════════════════════════════════════════════════');
+            console.log('[PAYMENT_FLOW] 📡 EMITTING PAYMENT SUCCESS TO ANDROID');
+            console.log('[PAYMENT_FLOW] Target Screen:', updatedBMI.screenId);
+            console.log('[PAYMENT_FLOW] Socket Room: screen:' + updatedBMI.screenId);
+            console.log('[PAYMENT_FLOW] Payload:', JSON.stringify(paymentSuccessPayload, null, 2));
+            console.log('═══════════════════════════════════════════════════════════════');
+            
             io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', paymentSuccessPayload);
             console.log('[PAYMENT] ✅ Payment success event emitted to screen:', updatedBMI.screenId, 'appVersion:', appVersion);
             console.log('[PAYMENT] Payload:', JSON.stringify(paymentSuccessPayload, null, 2));
@@ -337,8 +393,11 @@ exports.paymentSuccess = async (req, res, io) => {
             console.log('[PAYMENT] F2 version detected - skipping socket emission to Android. appVersion:', appVersion);
         }
         
+        console.log('[PAYMENT_FLOW] ✅ Payment flow completed successfully on server');
+        
         return res.json({ ok: true, message: 'Payment processed successfully' });
     } catch (e) {
+        console.log('[PAYMENT_FLOW] ❌ Error processing payment success:', e.message);
         console.error('[PAYMENT] POST /api/payment-success error', e);
         return res.status(500).json({ error: 'internal_error' });
     }
