@@ -114,31 +114,82 @@ const registrationRoutes = require('./routes/registrationRoutes');
 
 // Players join rooms by screenId
 io.on('connection', (socket) => {
-    console.log('[SOCKET] connected', socket.id, 'from', socket.handshake.address);
+    console.log('[SOCKET] ✅✅✅ NEW CONNECTION ESTABLISHED');
+    console.log('[SOCKET] Socket ID:', socket.id);
+    console.log('[SOCKET] Client IP:', socket.handshake.address);
+    console.log('[SOCKET] Transport:', socket.conn.transport.name);
+    console.log('[SOCKET] Total connected sockets:', io.sockets.sockets.size);
 
     socket.on('player-join', (data) => {
 		try {
             const screenId = String(data?.screenId || '');
-            console.log('[SOCKET] 🔔 player-join event received');
+            console.log('═══════════════════════════════════════════════════════════════');
+            console.log('[SOCKET] 🔔🔔🔔 PLAYER-JOIN EVENT RECEIVED 🔔🔔🔔');
             console.log('[SOCKET] Socket ID:', socket.id);
             console.log('[SOCKET] Screen ID:', screenId);
             console.log('[SOCKET] Data:', JSON.stringify(data));
+            console.log('═══════════════════════════════════════════════════════════════');
+            
 			if (screenId) {
 				const roomName = `screen:${screenId}`;
+				
+				// Leave any previous rooms this socket might be in (except its own socket room)
+				const currentRooms = Array.from(socket.rooms).filter(room => room !== socket.id);
+				if (currentRooms.length > 0) {
+					currentRooms.forEach(room => socket.leave(room));
+					console.log(`[SOCKET] Left previous rooms: ${currentRooms.join(", ")}`);
+				}
+				
 				socket.join(roomName);
+                const room = io.sockets.adapter.rooms.get(roomName);
+                const roomSize = room ? room.size : 0;
+                const isInRoom = socket.rooms.has(roomName);
+                
                 console.log(`[SOCKET] ✅✅✅ Socket ${socket.id} joined room: ${roomName}`);
-                console.log(`[SOCKET] Room members count: ${io.sockets.adapter.rooms.get(roomName)?.size || 0}`);
+                console.log(`[SOCKET] Room members count: ${roomSize}`);
+                console.log(`[SOCKET] Room exists: ${room !== undefined}`);
+                console.log(`[SOCKET] Socket is in room: ${isInRoom}`);
+                console.log(`[SOCKET] All rooms for this socket: ${Array.from(socket.rooms).join(", ")}`);
+                
+                // Verify room membership
+                if (!isInRoom) {
+                    console.log(`[SOCKET] ⚠️⚠️⚠️ WARNING: Socket claims to have joined but is not in room!`);
+                    // Try joining again
+                    socket.join(roomName);
+                    console.log(`[SOCKET] Retried join, now in room: ${socket.rooms.has(roomName)}`);
+                }
+                
+                // Emit confirmation back to client
+                socket.emit('room-joined', {
+                    roomName: roomName,
+                    screenId: screenId,
+                    roomSize: roomSize,
+                    socketId: socket.id,
+                    confirmed: true
+                });
+                console.log(`[SOCKET] ✅ Sent room-joined confirmation to socket ${socket.id}`);
+                console.log(`[SOCKET] Room ${roomName} now has ${roomSize} member(s)`);
 			} else {
-				console.log('[SOCKET] ⚠️ player-join received but screenId is empty');
+				console.log('[SOCKET] ⚠️⚠️⚠️ player-join received but screenId is empty or invalid');
+                socket.emit('room-join-error', { error: 'screenId is required' });
 			}
 		} catch (e) {
-            console.error('[SOCKET] ❌ player-join error', e);
+            console.error('[SOCKET] ❌❌❌ player-join error:', e);
+            socket.emit('room-join-error', { error: e.message });
 		}
 	});
 
     socket.on('disconnect', (reason) => {
-        console.log('[SOCKET] disconnected', socket.id, 'reason:', reason);
+        console.log('[SOCKET] ⚠️ Socket disconnected');
+        console.log('[SOCKET] Socket ID:', socket.id);
+        console.log('[SOCKET] Reason:', reason);
+        console.log('[SOCKET] Remaining connected sockets:', io.sockets.sockets.size);
 	});
+    
+    // Handle ping/pong for connection health
+    socket.on('ping', () => {
+        socket.emit('pong');
+    });
 });
 
 // Health
