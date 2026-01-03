@@ -386,8 +386,23 @@ exports.paymentSuccess = async (req, res, io) => {
             console.log('[PAYMENT_FLOW] Payload:', JSON.stringify(paymentSuccessPayload, null, 2));
             console.log('═══════════════════════════════════════════════════════════════');
             
-            io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', paymentSuccessPayload);
-            console.log('[PAYMENT] ✅ Payment success event emitted to screen:', updatedBMI.screenId, 'appVersion:', appVersion);
+            const roomName = `screen:${updatedBMI.screenId}`;
+            const room = io.sockets.adapter.rooms.get(roomName);
+            const roomSize = room ? room.size : 0;
+            
+            console.log('[PAYMENT_FLOW] 📡 About to emit to room:', roomName);
+            console.log('[PAYMENT_FLOW] Room members count:', roomSize);
+            console.log('[PAYMENT_FLOW] Room exists:', room !== undefined);
+            
+            if (roomSize === 0) {
+                console.log('[PAYMENT_FLOW] ⚠️⚠️⚠️ WARNING: Room is empty! No Android clients connected to room:', roomName);
+                console.log('[PAYMENT_FLOW] ⚠️ This means the Android app may not have joined the room yet');
+            }
+            
+            io.to(roomName).emit('payment-success', paymentSuccessPayload);
+            console.log('[PAYMENT] ✅ Payment success event emitted to room:', roomName);
+            console.log('[PAYMENT] ✅ Target screen:', updatedBMI.screenId, 'appVersion:', appVersion);
+            console.log('[PAYMENT] ✅ Room members:', roomSize);
             console.log('[PAYMENT] Payload:', JSON.stringify(paymentSuccessPayload, null, 2));
         } else {
             console.log('[PAYMENT] F2 version detected - skipping socket emission to Android. appVersion:', appVersion);

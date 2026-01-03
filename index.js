@@ -119,13 +119,20 @@ io.on('connection', (socket) => {
     socket.on('player-join', (data) => {
 		try {
             const screenId = String(data?.screenId || '');
-            console.log('[SOCKET] player-join', { socketId: socket.id, screenId, data });
+            console.log('[SOCKET] 🔔 player-join event received');
+            console.log('[SOCKET] Socket ID:', socket.id);
+            console.log('[SOCKET] Screen ID:', screenId);
+            console.log('[SOCKET] Data:', JSON.stringify(data));
 			if (screenId) {
-				socket.join(`screen:${screenId}`);
-                console.log(`[SOCKET] joined room screen:${screenId}`);
+				const roomName = `screen:${screenId}`;
+				socket.join(roomName);
+                console.log(`[SOCKET] ✅✅✅ Socket ${socket.id} joined room: ${roomName}`);
+                console.log(`[SOCKET] Room members count: ${io.sockets.adapter.rooms.get(roomName)?.size || 0}`);
+			} else {
+				console.log('[SOCKET] ⚠️ player-join received but screenId is empty');
 			}
 		} catch (e) {
-            console.error('[SOCKET] player-join error', e);
+            console.error('[SOCKET] ❌ player-join error', e);
 		}
 	});
 
