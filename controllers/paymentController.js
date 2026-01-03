@@ -124,8 +124,9 @@ exports.createOrder = async (req, res) => {
 /**
  * POST /api/payment/verify
  * Verify mock payment (Razorpay implementation commented out)
+ * Also triggers payment success notification to Android if bmiId and userId are in order notes
  */
-exports.verifyPayment = async (req, res) => {
+exports.verifyPayment = async (req, res, io, bmiFlowController) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
@@ -147,6 +148,67 @@ exports.verifyPayment = async (req, res) => {
       order_id: razorpay_order_id,
       payment_id: razorpay_payment_id
     });
+
+    // Automatically trigger payment success notification to Android after payment verification
+    // This ensures Android receives confirmation immediately after payment verification
+    if (mockOrderStore.has(razorpay_order_id) && io && bmiFlowController) {
+      const order = mockOrderStore.get(razorpay_order_id);
+      const notes = order.notes || {};
+      const userId = notes.userId;
+      const screenId = notes.screenId;
+      let bmiId = notes.bmiId;
+      
+      // If bmiId is not in notes, try to find the most recent unlinked BMI record for this screen
+      if (!bmiId && userId && screenId) {
+        try {
+          const prisma = require('../db');
+          // Find the most recent BMI record for this screen that doesn't have a userId yet
+          const recentBMI = await prisma.bMI.findFirst({
+            where: {
+              screenId: String(screenId),
+              userId: null // Not yet linked to a user
+            },
+            orderBy: {
+              timestamp: 'desc'
+            }
+          });
+          
+          if (recentBMI) {
+            bmiId = recentBMI.id;
+            console.log('[PAYMENT] Found recent BMI record for screen:', screenId, 'bmiId:', bmiId);
+          } else {
+            console.log('[PAYMENT] No unlinked BMI record found for screen:', screenId);
+          }
+        } catch (dbError) {
+          console.error('[PAYMENT] Error finding BMI record for auto-notification:', dbError);
+        }
+      }
+      
+      // Trigger payment success notification if we have both userId and bmiId
+      if (bmiId && userId) {
+        console.log('[PAYMENT] Auto-triggering payment success notification for bmiId:', bmiId, 'userId:', userId);
+        try {
+          // Call payment success handler directly
+          const mockReq = {
+            body: {
+              userId: userId,
+              bmiId: bmiId,
+              appVersion: 'f1' // Default to f1 for F1/F3 flows (will be normalized in paymentSuccess)
+            }
+          };
+          const mockRes = {
+            json: (data) => console.log('[PAYMENT] Auto payment success notification result:', data),
+            status: (code) => ({ json: (data) => console.log('[PAYMENT] Auto payment success notification error:', code, data) })
+          };
+          await bmiFlowController.paymentSuccess(mockReq, mockRes, io);
+        } catch (notifyError) {
+          console.error('[PAYMENT] Error auto-triggering payment success notification:', notifyError);
+          // Don't fail the verification if notification fails
+        }
+      } else {
+        console.log('[PAYMENT] Cannot auto-trigger payment success - missing bmiId or userId. bmiId:', bmiId, 'userId:', userId);
+      }
+    }
 
     return res.json({
       ok: true,

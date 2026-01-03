@@ -316,9 +316,10 @@ exports.paymentSuccess = async (req, res, io) => {
             console.log('[PAYMENT] F1/F3 Flow: Fortune generated and stored:', fortuneMessage);
         }
         
-       // Emit payment success to Android screen (only for non-F2 versions)
+       // Emit payment success to Android screen (for F1/F3 flows - non-F2 versions)
+        // Always emit for non-F2 flows to ensure Android receives payment confirmation
         if (normalizedAppVersion !== 'f2' && io) {
-            io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', {
+            const paymentSuccessPayload = {
                 bmiId: updatedBMI.id,
                 screenId: updatedBMI.screenId,
                 userId: updatedBMI.userId,
@@ -328,10 +329,12 @@ exports.paymentSuccess = async (req, res, io) => {
                 height: updatedBMI.heightCm,
                 weight: updatedBMI.weightKg,
                 timestamp: updatedBMI.timestamp.toISOString()
-            });
-            console.log('[PAYMENT] Success emitted to screen:', updatedBMI.screenId, 'appVersion:', appVersion);
+            };
+            io.to(`screen:${updatedBMI.screenId}`).emit('payment-success', paymentSuccessPayload);
+            console.log('[PAYMENT] ✅ Payment success event emitted to screen:', updatedBMI.screenId, 'appVersion:', appVersion);
+            console.log('[PAYMENT] Payload:', JSON.stringify(paymentSuccessPayload, null, 2));
         } else {
-            console.log('[PAYMENT] F2 version or missing appVersion - skipping socket emission to Android. appVersion:', appVersion);
+            console.log('[PAYMENT] F2 version detected - skipping socket emission to Android. appVersion:', appVersion);
         }
         
         return res.json({ ok: true, message: 'Payment processed successfully' });

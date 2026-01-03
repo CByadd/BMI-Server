@@ -322,7 +322,8 @@ app.use('/api/media', require('./routes/mediaRoutes'));
 app.use('/api', require('./routes/playlistRoutes')(io));
 app.use('/api', require('./routes/scheduleRoutes'));
 app.use('/api', require('./routes/defaultAssetRoutes'));
-app.use('/api', require('./routes/paymentRoutes'));
+const paymentRoutes = require('./routes/paymentRoutes');
+app.use('/api', paymentRoutes(io));
 console.log('[SERVER] Payment routes mounted at /api');
 
 // Asset Cleanup Service - Scheduled task
