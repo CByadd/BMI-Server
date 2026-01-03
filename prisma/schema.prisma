@@ -30,6 +30,8 @@ model AdscapePlayer {
   logoUrl           String?  @db.Text // Logo URL stored in Cloudinary
   playlistId        String?  @db.VarChar(255) // Playlist ID assigned to this screen
   flowDrawerEnabled Boolean? @default(true) // Enable/disable drawer shown when flow is active
+  flowDrawerImage1Url String? @db.Text // Flow drawer top image URL stored in Cloudinary
+  flowDrawerImage2Url String? @db.Text // Flow drawer bottom image URL stored in Cloudinary
   lastSeen          DateTime @default(now())
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())

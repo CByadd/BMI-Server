@@ -53,6 +53,17 @@ module.exports = (io) => {
     // Delete logo for screen (require auth and screen access)
     router.delete('/adscape/player/:screenId/logo', authenticateToken, checkScreenAccess, screenController.deleteLogo);
 
+    // Upload flow drawer image for screen (require auth and screen access)
+    router.post('/adscape/player/:screenId/flow-drawer-image/:imageNumber', authenticateToken, checkScreenAccess, upload.single('image'), (req, res) => 
+        screenController.uploadFlowDrawerImage(req, res)
+    );
+
+    // Get flow drawer images for screen (no auth required for Android app)
+    router.get('/adscape/player/:screenId/flow-drawer-images', screenController.getFlowDrawerImages);
+
+    // Delete flow drawer image for screen (require auth and screen access)
+    router.delete('/adscape/player/:screenId/flow-drawer-image/:imageNumber', authenticateToken, checkScreenAccess, screenController.deleteFlowDrawerImage);
+
     // Update screen configuration (require auth and screen access)
     router.put('/adscape/player/:screenId/config', authenticateToken, checkScreenAccess, (req, res) => 
         screenController.updateScreenConfig(req, res, io)

@@ -141,16 +141,18 @@ exports.getPlayer = async (req, res) => {
             }
         }
         
-        // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, logoUrl, and flowDrawerEnabled using raw SQL (columns might not exist yet)
+        // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, logoUrl, flowDrawerEnabled, and flow drawer images using raw SQL (columns might not exist yet)
         let playlistId = null;
         let heightCalibration = 0;
         let heightCalibrationEnabled = true;
         let paymentAmount = null;
         let logoUrl = null;
         let flowDrawerEnabled = true;
+        let flowDrawerImage1Url = null;
+        let flowDrawerImage2Url = null;
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerImage1Url", "flowDrawerImage2Url" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
             `;
             if (configResult && configResult.length > 0) {
                 playlistId = configResult[0].playlistId || null;
@@ -168,6 +170,12 @@ exports.getPlayer = async (req, res) => {
                 }
                 if (configResult[0].flowDrawerEnabled !== null && configResult[0].flowDrawerEnabled !== undefined) {
                     flowDrawerEnabled = Boolean(configResult[0].flowDrawerEnabled);
+                }
+                if (configResult[0].flowDrawerImage1Url !== null && configResult[0].flowDrawerImage1Url !== undefined) {
+                    flowDrawerImage1Url = configResult[0].flowDrawerImage1Url;
+                }
+                if (configResult[0].flowDrawerImage2Url !== null && configResult[0].flowDrawerImage2Url !== undefined) {
+                    flowDrawerImage2Url = configResult[0].flowDrawerImage2Url;
                 }
             }
         } catch (e) {
@@ -198,7 +206,9 @@ exports.getPlayer = async (req, res) => {
                 createdAt: player.createdAt,
                 updatedAt: player.updatedAt,
                 playlistId: playlistId,
-                logoUrl: logoUrl
+                logoUrl: logoUrl,
+                flowDrawerImage1Url: flowDrawerImage1Url,
+                flowDrawerImage2Url: flowDrawerImage2Url
             }
         });
     } catch (e) {
@@ -612,6 +622,207 @@ exports.deleteLogo = async (req, res) => {
     } catch (error) {
         console.error('[ADSCAPE] Delete logo error:', error);
         return res.status(500).json({ ok: false, error: 'Failed to delete logo' });
+    }
+};
+
+/**
+ * Upload flow drawer image for screen
+ * POST /api/adscape/player/:screenId/flow-drawer-image/:imageNumber
+ */
+exports.uploadFlowDrawerImage = async (req, res) => {
+    try {
+        const { screenId, imageNumber } = req.params;
+        
+        if (!req.file) {
+            return res.status(400).json({ ok: false, error: 'No image file provided' });
+        }
+
+        const imageNum = parseInt(imageNumber);
+        if (imageNum !== 1 && imageNum !== 2) {
+            return res.status(400).json({ ok: false, error: 'Image number must be 1 or 2' });
+        }
+
+        // Check if player exists
+        const player = await prisma.adscapePlayer.findUnique({
+            where: { screenId: String(screenId) }
+        });
+
+        if (!player) {
+            return res.status(404).json({ ok: false, error: 'Player not found' });
+        }
+
+        const imageField = imageNum === 1 ? 'flowDrawerImage1Url' : 'flowDrawerImage2Url';
+        const oldImageUrl = player[imageField];
+
+        // Delete old image from Cloudinary if exists
+        if (oldImageUrl) {
+            try {
+                const urlParts = oldImageUrl.split('/');
+                const filename = urlParts[urlParts.length - 1].split('.')[0];
+                const folder = 'well2day-flow-drawer';
+                const publicId = `${folder}/${filename}`;
+                await cloudinary.uploader.destroy(publicId);
+                console.log('[ADSCAPE] Old flow drawer image deleted from Cloudinary:', publicId);
+            } catch (deleteError) {
+                console.error('[ADSCAPE] Error deleting old flow drawer image:', deleteError);
+                // Continue even if deletion fails
+            }
+        }
+
+        // Upload new image to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+            cloudinary.uploader.upload_stream(
+                {
+                    folder: 'well2day-flow-drawer',
+                    resource_type: 'image',
+                    use_filename: true,
+                    unique_filename: true,
+                    overwrite: false,
+                },
+                (error, result) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(result);
+                    }
+                }
+            ).end(req.file.buffer);
+        });
+
+        // Update player with image URL
+        const updateData = {
+            [imageField]: uploadResult.secure_url,
+            updatedAt: new Date()
+        };
+
+        const updatedPlayer = await prisma.adscapePlayer.update({
+            where: { screenId: String(screenId) },
+            data: updateData
+        });
+
+        console.log(`[ADSCAPE] Flow drawer image ${imageNum} uploaded for screen:`, screenId);
+
+        return res.json({
+            ok: true,
+            imageUrl: uploadResult.secure_url,
+            imageNumber: imageNum,
+            player: {
+                screenId: updatedPlayer.screenId,
+                [imageField]: updatedPlayer[imageField]
+            }
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Upload flow drawer image error:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to upload flow drawer image' });
+    }
+};
+
+/**
+ * Get flow drawer images for screen
+ * GET /api/adscape/player/:screenId/flow-drawer-images
+ */
+exports.getFlowDrawerImages = async (req, res) => {
+    try {
+        const { screenId } = req.params;
+        
+        // Use raw SQL to fetch flow drawer image URLs (columns might not exist yet)
+        let flowDrawerImage1Url = null;
+        let flowDrawerImage2Url = null;
+
+        try {
+            const imageResult = await prisma.$queryRaw`
+                SELECT "flowDrawerImage1Url", "flowDrawerImage2Url" 
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
+            `;
+
+            if (imageResult && imageResult.length > 0) {
+                flowDrawerImage1Url = imageResult[0].flowDrawerImage1Url || null;
+                flowDrawerImage2Url = imageResult[0].flowDrawerImage2Url || null;
+            }
+        } catch (e) {
+            console.log('[ADSCAPE] Flow drawer image columns might not exist yet or error:', e.message);
+            // Return empty if columns don't exist
+            return res.json({
+                ok: true,
+                flowDrawerImage1Url: null,
+                flowDrawerImage2Url: null
+            });
+        }
+
+        return res.json({
+            ok: true,
+            flowDrawerImage1Url: flowDrawerImage1Url,
+            flowDrawerImage2Url: flowDrawerImage2Url
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Get flow drawer images error:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to get flow drawer images' });
+    }
+};
+
+/**
+ * Delete flow drawer image for screen
+ * DELETE /api/adscape/player/:screenId/flow-drawer-image/:imageNumber
+ */
+exports.deleteFlowDrawerImage = async (req, res) => {
+    try {
+        const { screenId, imageNumber } = req.params;
+        
+        const imageNum = parseInt(imageNumber);
+        if (imageNum !== 1 && imageNum !== 2) {
+            return res.status(400).json({ ok: false, error: 'Image number must be 1 or 2' });
+        }
+
+        // Check if player exists
+        const player = await prisma.adscapePlayer.findUnique({
+            where: { screenId: String(screenId) }
+        });
+
+        if (!player) {
+            return res.status(404).json({ ok: false, error: 'Player not found' });
+        }
+
+        const imageField = imageNum === 1 ? 'flowDrawerImage1Url' : 'flowDrawerImage2Url';
+        const imageUrl = player[imageField];
+
+        if (!imageUrl) {
+            return res.status(404).json({ ok: false, error: 'Flow drawer image not found' });
+        }
+
+        // Delete image from Cloudinary if exists
+        try {
+            const urlParts = imageUrl.split('/');
+            const filename = urlParts[urlParts.length - 1].split('.')[0];
+            const folder = 'well2day-flow-drawer';
+            const publicId = `${folder}/${filename}`;
+            await cloudinary.uploader.destroy(publicId);
+            console.log('[ADSCAPE] Flow drawer image deleted from Cloudinary:', publicId);
+        } catch (deleteError) {
+            console.error('[ADSCAPE] Error deleting flow drawer image from Cloudinary:', deleteError);
+            // Continue even if deletion fails
+        }
+
+        // Update player to remove image URL
+        const updateData = {
+            [imageField]: null,
+            updatedAt: new Date()
+        };
+
+        await prisma.adscapePlayer.update({
+            where: { screenId: String(screenId) },
+            data: updateData
+        });
+
+        return res.json({
+            ok: true,
+            message: 'Flow drawer image deleted successfully',
+            imageNumber: imageNum
+        });
+    } catch (error) {
+        console.error('[ADSCAPE] Delete flow drawer image error:', error);
+        return res.status(500).json({ ok: false, error: 'Failed to delete flow drawer image' });
     }
 };
 
