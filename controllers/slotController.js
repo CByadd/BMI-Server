@@ -180,12 +180,12 @@ exports.getAssetsByScreen = async (req, res) => {
 // Track asset play
 exports.trackAssetPlay = async (req, res) => {
   try {
-    const { screenId, assetUrl, campaignId } = req.body;
+    const { screen_id, asset_url, played_at, campaign_id } = req.body;
 
     // Insert play log
     await prisma.$queryRaw`
       INSERT INTO asset_play_logs (screen_id, asset_url, campaign_id, played_at)
-      VALUES (${screenId}, ${assetUrl}, ${campaignId || null}, NOW())
+      VALUES (${screen_id}, ${asset_url}, ${campaign_id || null}, ${played_at ? new Date(played_at) : new Date()})
     `;
 
     res.json({ ok: true, message: 'Play tracked successfully' });
