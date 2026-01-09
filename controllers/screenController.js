@@ -152,9 +152,16 @@ exports.getPlayer = async (req, res) => {
         let flowDrawerSlots = [];
         let flowDrawerImage1Url = null;
         let flowDrawerImage2Url = null;
+        let flowDrawerImage3Url = null;
+        let flowDrawerImage4Url = null;
+        let flowDrawerImage5Url = null;
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", "flowDrawerSlots", "flowDrawerImage1Url", "flowDrawerImage2Url" FROM "AdscapePlayer" WHERE "screenId" = ${String(screenId)} LIMIT 1
+                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", 
+                       "flowDrawerImage1Url", "flowDrawerImage2Url", "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
             `;
             if (configResult && configResult.length > 0) {
                 playlistId = configResult[0].playlistId || null;
@@ -176,36 +183,38 @@ exports.getPlayer = async (req, res) => {
                 if (configResult[0].flowDrawerSlotCount !== null && configResult[0].flowDrawerSlotCount !== undefined) {
                     flowDrawerSlotCount = parseInt(configResult[0].flowDrawerSlotCount) || 2;
                 }
-                if (configResult[0].flowDrawerSlots !== null && configResult[0].flowDrawerSlots !== undefined) {
-                    flowDrawerSlots = JSON.parse(JSON.stringify(configResult[0].flowDrawerSlots));
-                }
+                
+                // Get individual URL fields
+                flowDrawerImage1Url = configResult[0].flowDrawerImage1Url || null;
+                flowDrawerImage2Url = configResult[0].flowDrawerImage2Url || null;
+                flowDrawerImage3Url = configResult[0].flowDrawerImage3Url || null;
+                flowDrawerImage4Url = configResult[0].flowDrawerImage4Url || null;
+                flowDrawerImage5Url = configResult[0].flowDrawerImage5Url || null;
+                
+                // Build slots array from individual URL fields based on slot count
+                flowDrawerSlots = [];
+                if (flowDrawerSlotCount >= 1) flowDrawerSlots.push(flowDrawerImage1Url);
+                if (flowDrawerSlotCount >= 2) flowDrawerSlots.push(flowDrawerImage2Url);
+                if (flowDrawerSlotCount >= 3) flowDrawerSlots.push(flowDrawerImage3Url);
+                if (flowDrawerSlotCount >= 4) flowDrawerSlots.push(flowDrawerImage4Url);
+                if (flowDrawerSlotCount >= 5) flowDrawerSlots.push(flowDrawerImage5Url);
                 
                 console.log('[ADSCAPE] Loaded flow drawer config:', {
                     slotCount: flowDrawerSlotCount,
                     slotsLength: flowDrawerSlots.length,
-                    enabled: flowDrawerEnabled
+                    enabled: flowDrawerEnabled,
+                    imageUrls: {
+                        1: flowDrawerImage1Url,
+                        2: flowDrawerImage2Url,
+                        3: flowDrawerImage3Url,
+                        4: flowDrawerImage4Url,
+                        5: flowDrawerImage5Url
+                    }
                 });
-                if (configResult[0].flowDrawerImage1Url !== null && configResult[0].flowDrawerImage1Url !== undefined) {
-                    flowDrawerImage1Url = configResult[0].flowDrawerImage1Url;
-                }
-                if (configResult[0].flowDrawerImage2Url !== null && configResult[0].flowDrawerImage2Url !== undefined) {
-                    flowDrawerImage2Url = configResult[0].flowDrawerImage2Url;
-                }
-                
-                // Migrate legacy fields to slots if slots is empty
-                if (flowDrawerSlots.length === 0 && (flowDrawerImage1Url || flowDrawerImage2Url)) {
-                    flowDrawerSlots = [flowDrawerImage1Url, flowDrawerImage2Url];
-                    flowDrawerSlotCount = 2;
-                }
-                
-                // Ensure slots array has correct length
-                while (flowDrawerSlots.length < flowDrawerSlotCount) {
-                    flowDrawerSlots.push(null);
-                }
             }
         } catch (e) {
             // Columns might not exist yet, use defaults
-            console.log('[ADSCAPE] Config columns might not exist yet, using defaults');
+            console.log('[ADSCAPE] Config columns might not exist yet, using defaults:', e.message);
         }
         
         return res.json({
@@ -234,8 +243,11 @@ exports.getPlayer = async (req, res) => {
                 updatedAt: player.updatedAt,
                 playlistId: playlistId,
                 logoUrl: logoUrl,
-                flowDrawerImage1Url: flowDrawerImage1Url, // Legacy support
-                flowDrawerImage2Url: flowDrawerImage2Url  // Legacy support
+                flowDrawerImage1Url: flowDrawerImage1Url,
+                flowDrawerImage2Url: flowDrawerImage2Url,
+                flowDrawerImage3Url: flowDrawerImage3Url,
+                flowDrawerImage4Url: flowDrawerImage4Url,
+                flowDrawerImage5Url: flowDrawerImage5Url
             }
         });
     } catch (e) {
