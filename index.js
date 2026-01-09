@@ -48,7 +48,8 @@ app.use(cors({
         'https://billboard-admin-x.vercel.app',
         'http://127.0.0.1:5500',
         'https://bmi-client.onrender.com',
-        'https://bmi-admin-pi.vercel.app'
+        'https://bmi-admin-pi.vercel.app',
+        'http://4.240.88.83'
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -66,7 +67,8 @@ const allowedOrigins = [
     'https://adscape.co.in',
     'https://admin.adscape.co.in',
     'https://billboard-admin-x.vercel.app',
-    'http://127.0.0.1:5500'
+    'http://127.0.0.1:5500',
+    'http://4.240.88.83'
 ];
 
 app.use((req, res, next) => {
