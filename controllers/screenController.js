@@ -767,39 +767,29 @@ exports.uploadFlowDrawerImage = async (req, res) => {
                 WHERE "screenId" = $2
             `, uploadResult.secure_url, String(screenId));
         } catch (e) {
-            // Column doesn't exist, create it first
-            if (e.code === '42703' || e.message?.includes('does not exist')) {
-                console.log('[ADSCAPE] flowDrawerSlots column does not exist, creating it...');
-                await prisma.$executeRawUnsafe(`
-                    ALTER TABLE "AdscapePlayer" 
-                    ADD COLUMN IF NOT EXISTS "flowDrawerSlots" JSONB
-                `);
-                // Now update it
-                await prisma.$executeRaw`
-                    UPDATE "AdscapePlayer"
-                    SET "flowDrawerSlots" = ${JSON.stringify(slots)}::jsonb,
-                        "updatedAt" = NOW()
-                    WHERE "screenId" = ${String(screenId)}
-                `;
-            } else {
-                throw e;
-            }
+            console.error('[ADSCAPE] Error updating flow drawer image field:', e);
+            throw e;
         }
 
-        // Also update legacy fields for backward compatibility (if slot count is 2)
-        if (slotCount === 2) {
-            const legacyField = slotIndex === 0 ? 'flowDrawerImage1Url' : 'flowDrawerImage2Url';
-            try {
-                await prisma.$executeRawUnsafe(`
-                    UPDATE "AdscapePlayer"
-                    SET "${legacyField}" = '${uploadResult.secure_url}',
-                        "updatedAt" = NOW()
-                    WHERE "screenId" = '${String(screenId)}'
-                `);
-            } catch (e) {
-                // Ignore if column doesn't exist
-                console.log('[ADSCAPE] Legacy flow drawer image column might not exist');
+        // Fetch updated URLs to return in response
+        let updatedSlots = [];
+        try {
+            const updatedResult = await prisma.$queryRaw`
+                SELECT "flowDrawerImage1Url", "flowDrawerImage2Url",
+                       "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
+            `;
+            if (updatedResult && updatedResult.length > 0) {
+                if (slotCount >= 1) updatedSlots.push(updatedResult[0].flowDrawerImage1Url || null);
+                if (slotCount >= 2) updatedSlots.push(updatedResult[0].flowDrawerImage2Url || null);
+                if (slotCount >= 3) updatedSlots.push(updatedResult[0].flowDrawerImage3Url || null);
+                if (slotCount >= 4) updatedSlots.push(updatedResult[0].flowDrawerImage4Url || null);
+                if (slotCount >= 5) updatedSlots.push(updatedResult[0].flowDrawerImage5Url || null);
             }
+        } catch (e) {
+            console.log('[ADSCAPE] Error fetching updated slots:', e.message);
         }
 
         console.log(`[ADSCAPE] Flow drawer image ${slotIndex + 1} uploaded for screen:`, screenId);
@@ -808,7 +798,7 @@ exports.uploadFlowDrawerImage = async (req, res) => {
             ok: true,
             imageUrl: uploadResult.secure_url,
             imageNumber: slotIndex + 1,
-            slots: slots,
+            slots: updatedSlots,
             slotCount: slotCount
         });
     } catch (error) {
@@ -958,58 +948,60 @@ exports.deleteFlowDrawerImage = async (req, res) => {
             // Continue even if deletion fails
         }
 
-        // Update slots array
-        slots[slotIndex] = null;
-
-        // Update player with slots array using raw SQL
-        try {
-            await prisma.$executeRaw`
-                UPDATE "AdscapePlayer"
-                SET "flowDrawerSlots" = ${JSON.stringify(slots)}::jsonb,
-                    "updatedAt" = NOW()
-                WHERE "screenId" = ${String(screenId)}
-            `;
-        } catch (e) {
-            // Column doesn't exist, create it first
-            if (e.code === '42703' || e.message?.includes('does not exist')) {
-                console.log('[ADSCAPE] flowDrawerSlots column does not exist, creating it...');
-                await prisma.$executeRawUnsafe(`
-                    ALTER TABLE "AdscapePlayer" 
-                    ADD COLUMN IF NOT EXISTS "flowDrawerSlots" JSONB
-                `);
-                // Now update it
-                await prisma.$executeRaw`
-                    UPDATE "AdscapePlayer"
-                    SET "flowDrawerSlots" = ${JSON.stringify(slots)}::jsonb,
-                        "updatedAt" = NOW()
-                    WHERE "screenId" = ${String(screenId)}
-                `;
-            } else {
-                throw e;
-            }
+        // Determine which field to clear based on slot index
+        const fieldMap = {
+            0: 'flowDrawerImage1Url',
+            1: 'flowDrawerImage2Url',
+            2: 'flowDrawerImage3Url',
+            3: 'flowDrawerImage4Url',
+            4: 'flowDrawerImage5Url'
+        };
+        
+        const fieldName = fieldMap[slotIndex];
+        if (!fieldName) {
+            return res.status(400).json({ ok: false, error: 'Invalid slot number' });
         }
 
-        // Also update legacy fields for backward compatibility (if slot count is 2)
-        if (slotCount === 2) {
-            const legacyField = slotIndex === 0 ? 'flowDrawerImage1Url' : 'flowDrawerImage2Url';
-            try {
-                await prisma.$executeRawUnsafe(`
-                    UPDATE "AdscapePlayer"
-                    SET "${legacyField}" = NULL,
-                        "updatedAt" = NOW()
-                    WHERE "screenId" = '${String(screenId)}'
-                `);
-            } catch (e) {
-                // Ignore if column doesn't exist
-                console.log('[ADSCAPE] Legacy flow drawer image column might not exist');
+        // Update player to clear the individual URL field using raw SQL
+        try {
+            await prisma.$executeRawUnsafe(`
+                UPDATE "AdscapePlayer"
+                SET "${fieldName}" = NULL,
+                    "updatedAt" = NOW()
+                WHERE "screenId" = $1
+            `, String(screenId));
+        } catch (e) {
+            console.error('[ADSCAPE] Error updating flow drawer image field:', e);
+            throw e;
+        }
+
+        // Fetch updated URLs to return in response
+        let updatedSlots = [];
+        try {
+            const updatedResult = await prisma.$queryRaw`
+                SELECT "flowDrawerImage1Url", "flowDrawerImage2Url",
+                       "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
+            `;
+            if (updatedResult && updatedResult.length > 0) {
+                if (slotCount >= 1) updatedSlots.push(updatedResult[0].flowDrawerImage1Url || null);
+                if (slotCount >= 2) updatedSlots.push(updatedResult[0].flowDrawerImage2Url || null);
+                if (slotCount >= 3) updatedSlots.push(updatedResult[0].flowDrawerImage3Url || null);
+                if (slotCount >= 4) updatedSlots.push(updatedResult[0].flowDrawerImage4Url || null);
+                if (slotCount >= 5) updatedSlots.push(updatedResult[0].flowDrawerImage5Url || null);
             }
+        } catch (e) {
+            console.log('[ADSCAPE] Error fetching updated slots:', e.message);
         }
 
         return res.json({
             ok: true,
             message: 'Flow drawer image deleted successfully',
             imageNumber: slotIndex + 1,
-            slots: slots
+            slots: updatedSlots,
+            slotCount: slotCount
         });
     } catch (error) {
         console.error('[ADSCAPE] Delete flow drawer image error:', error);
