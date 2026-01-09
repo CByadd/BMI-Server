@@ -678,38 +678,38 @@ exports.uploadFlowDrawerImage = async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Player not found' });
         }
 
-        // Get current slot count and slots array
+        // Get current slot count
         let slotCount = 2; // Default
-        let slots = [];
+        let oldImageUrl = null;
         
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "flowDrawerSlotCount", "flowDrawerSlots" 
+                SELECT "flowDrawerSlotCount", "flowDrawerImage1Url", "flowDrawerImage2Url",
+                       "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
                 FROM "AdscapePlayer" 
                 WHERE "screenId" = ${String(screenId)} 
                 LIMIT 1
             `;
             if (configResult && configResult.length > 0) {
                 slotCount = configResult[0].flowDrawerSlotCount || 2;
-                slots = configResult[0].flowDrawerSlots ? JSON.parse(JSON.stringify(configResult[0].flowDrawerSlots)) : [];
+                // Get old image URL for the slot being updated
+                if (slotIndex === 0) oldImageUrl = configResult[0].flowDrawerImage1Url;
+                else if (slotIndex === 1) oldImageUrl = configResult[0].flowDrawerImage2Url;
+                else if (slotIndex === 2) oldImageUrl = configResult[0].flowDrawerImage3Url;
+                else if (slotIndex === 3) oldImageUrl = configResult[0].flowDrawerImage4Url;
+                else if (slotIndex === 4) oldImageUrl = configResult[0].flowDrawerImage5Url;
             }
         } catch (e) {
             // Columns might not exist yet, use defaults
             console.log('[ADSCAPE] Flow drawer slot columns might not exist yet, using defaults');
         }
 
-        // Ensure slots array has correct length
-        while (slots.length < slotCount) {
-            slots.push(null);
-        }
-
         // Validate slot index
-        if (slotIndex >= slotCount) {
-            return res.status(400).json({ ok: false, error: `Image number must be between 1 and ${slotCount}` });
+        if (slotIndex >= slotCount || slotIndex >= 5) {
+            return res.status(400).json({ ok: false, error: `Image number must be between 1 and ${Math.min(slotCount, 5)}` });
         }
 
         // Delete old image from Cloudinary if exists
-        const oldImageUrl = slots[slotIndex];
         if (oldImageUrl) {
             try {
                 const urlParts = oldImageUrl.split('/');
@@ -744,17 +744,28 @@ exports.uploadFlowDrawerImage = async (req, res) => {
             ).end(req.file.buffer);
         });
 
-        // Update slots array
-        slots[slotIndex] = uploadResult.secure_url;
+        // Determine which field to update based on slot index
+        const fieldMap = {
+            0: 'flowDrawerImage1Url',
+            1: 'flowDrawerImage2Url',
+            2: 'flowDrawerImage3Url',
+            3: 'flowDrawerImage4Url',
+            4: 'flowDrawerImage5Url'
+        };
+        
+        const fieldName = fieldMap[slotIndex];
+        if (!fieldName) {
+            return res.status(400).json({ ok: false, error: 'Invalid slot number' });
+        }
 
-        // Update player with slots array using raw SQL
+        // Update player with individual URL field using raw SQL
         try {
-            await prisma.$executeRaw`
+            await prisma.$executeRawUnsafe(`
                 UPDATE "AdscapePlayer"
-                SET "flowDrawerSlots" = ${JSON.stringify(slots)}::jsonb,
+                SET "${fieldName}" = $1,
                     "updatedAt" = NOW()
-                WHERE "screenId" = ${String(screenId)}
-            `;
+                WHERE "screenId" = $2
+            `, uploadResult.secure_url, String(screenId));
         } catch (e) {
             // Column doesn't exist, create it first
             if (e.code === '42703' || e.message?.includes('does not exist')) {
@@ -822,7 +833,8 @@ exports.getFlowDrawerImages = async (req, res) => {
 
         try {
             const imageResult = await prisma.$queryRaw`
-                SELECT "flowDrawerSlotCount", "flowDrawerSlots", "flowDrawerImage1Url", "flowDrawerImage2Url" 
+                SELECT "flowDrawerSlotCount", "flowDrawerImage1Url", "flowDrawerImage2Url", 
+                       "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
                 FROM "AdscapePlayer" 
                 WHERE "screenId" = ${String(screenId)} 
                 LIMIT 1
@@ -830,20 +842,19 @@ exports.getFlowDrawerImages = async (req, res) => {
 
             if (imageResult && imageResult.length > 0) {
                 slotCount = imageResult[0].flowDrawerSlotCount || 2;
-                slots = imageResult[0].flowDrawerSlots ? JSON.parse(JSON.stringify(imageResult[0].flowDrawerSlots)) : [];
                 flowDrawerImage1Url = imageResult[0].flowDrawerImage1Url || null;
                 flowDrawerImage2Url = imageResult[0].flowDrawerImage2Url || null;
+                const flowDrawerImage3Url = imageResult[0].flowDrawerImage3Url || null;
+                const flowDrawerImage4Url = imageResult[0].flowDrawerImage4Url || null;
+                const flowDrawerImage5Url = imageResult[0].flowDrawerImage5Url || null;
                 
-                // If slots array is empty but legacy fields exist, migrate them
-                if (slots.length === 0 && (flowDrawerImage1Url || flowDrawerImage2Url)) {
-                    slots = [flowDrawerImage1Url, flowDrawerImage2Url];
-                    slotCount = 2;
-                }
-                
-                // Ensure slots array has correct length
-                while (slots.length < slotCount) {
-                    slots.push(null);
-                }
+                // Build slots array from individual URL fields based on slot count
+                slots = [];
+                if (slotCount >= 1) slots.push(flowDrawerImage1Url);
+                if (slotCount >= 2) slots.push(flowDrawerImage2Url);
+                if (slotCount >= 3) slots.push(flowDrawerImage3Url);
+                if (slotCount >= 4) slots.push(flowDrawerImage4Url);
+                if (slotCount >= 5) slots.push(flowDrawerImage5Url);
             }
         } catch (e) {
             console.log('[ADSCAPE] Flow drawer image columns might not exist yet or error:', e.message);
@@ -853,7 +864,10 @@ exports.getFlowDrawerImages = async (req, res) => {
                 slotCount: 2,
                 slots: [],
                 flowDrawerImage1Url: null,
-                flowDrawerImage2Url: null
+                flowDrawerImage2Url: null,
+                flowDrawerImage3Url: null,
+                flowDrawerImage4Url: null,
+                flowDrawerImage5Url: null
             });
         }
 
@@ -861,8 +875,11 @@ exports.getFlowDrawerImages = async (req, res) => {
             ok: true,
             slotCount: slotCount,
             slots: slots,
-            flowDrawerImage1Url: flowDrawerImage1Url, // Legacy support
-            flowDrawerImage2Url: flowDrawerImage2Url  // Legacy support
+            flowDrawerImage1Url: slots[0] || null,
+            flowDrawerImage2Url: slots[1] || null,
+            flowDrawerImage3Url: slots[2] || null,
+            flowDrawerImage4Url: slots[3] || null,
+            flowDrawerImage5Url: slots[4] || null
         });
     } catch (error) {
         console.error('[ADSCAPE] Get flow drawer images error:', error);
@@ -892,44 +909,38 @@ exports.deleteFlowDrawerImage = async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Player not found' });
         }
 
-        // Get current slot count and slots array
+        // Get current slot count and image URL for the slot
         let slotCount = 2; // Default
-        let slots = [];
+        let imageUrl = null;
         
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "flowDrawerSlotCount", "flowDrawerSlots" 
+                SELECT "flowDrawerSlotCount", "flowDrawerImage1Url", "flowDrawerImage2Url",
+                       "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
                 FROM "AdscapePlayer" 
                 WHERE "screenId" = ${String(screenId)} 
                 LIMIT 1
             `;
             if (configResult && configResult.length > 0) {
                 slotCount = configResult[0].flowDrawerSlotCount || 2;
-                slots = configResult[0].flowDrawerSlots ? JSON.parse(JSON.stringify(configResult[0].flowDrawerSlots)) : [];
+                // Get image URL for the slot being deleted
+                if (slotIndex === 0) imageUrl = configResult[0].flowDrawerImage1Url;
+                else if (slotIndex === 1) imageUrl = configResult[0].flowDrawerImage2Url;
+                else if (slotIndex === 2) imageUrl = configResult[0].flowDrawerImage3Url;
+                else if (slotIndex === 3) imageUrl = configResult[0].flowDrawerImage4Url;
+                else if (slotIndex === 4) imageUrl = configResult[0].flowDrawerImage5Url;
             }
         } catch (e) {
             // Columns might not exist yet, try legacy fields
             console.log('[ADSCAPE] Flow drawer slot columns might not exist yet, trying legacy fields');
-            if (slotIndex === 0 && player.flowDrawerImage1Url) {
-                slots = [player.flowDrawerImage1Url, player.flowDrawerImage2Url || null];
-            } else if (slotIndex === 1 && player.flowDrawerImage2Url) {
-                slots = [player.flowDrawerImage1Url || null, player.flowDrawerImage2Url];
-            } else {
-                return res.status(404).json({ ok: false, error: 'Flow drawer image not found' });
-            }
-        }
-
-        // Ensure slots array has correct length
-        while (slots.length < slotCount) {
-            slots.push(null);
+            if (slotIndex === 0) imageUrl = player.flowDrawerImage1Url;
+            else if (slotIndex === 1) imageUrl = player.flowDrawerImage2Url;
         }
 
         // Validate slot index
-        if (slotIndex >= slots.length) {
-            return res.status(400).json({ ok: false, error: `Image number must be between 1 and ${slots.length}` });
+        if (slotIndex >= slotCount || slotIndex >= 5) {
+            return res.status(400).json({ ok: false, error: `Image number must be between 1 and ${Math.min(slotCount, 5)}` });
         }
-
-        const imageUrl = slots[slotIndex];
         if (!imageUrl) {
             return res.status(404).json({ ok: false, error: 'Flow drawer image not found' });
         }

@@ -32,8 +32,11 @@ model AdscapePlayer {
   flowDrawerEnabled Boolean? @default(true) // Enable/disable drawer shown when flow is active
   flowDrawerSlotCount Int? @default(2) // Number of slots: 2, 3, or 5
   flowDrawerSlots Json? // Array of image URLs: [url1, url2, ...] stored in Cloudinary
-  flowDrawerImage1Url String? @db.Text // Flow drawer top image URL stored in Cloudinary (legacy, for backward compatibility)
-  flowDrawerImage2Url String? @db.Text // Flow drawer bottom image URL stored in Cloudinary (legacy, for backward compatibility)
+  flowDrawerImage1Url String? @db.Text // Flow drawer image URL for slot 1 stored in Cloudinary
+  flowDrawerImage2Url String? @db.Text // Flow drawer image URL for slot 2 stored in Cloudinary
+  flowDrawerImage3Url String? @db.Text // Flow drawer image URL for slot 3 stored in Cloudinary
+  flowDrawerImage4Url String? @db.Text // Flow drawer image URL for slot 4 stored in Cloudinary
+  flowDrawerImage5Url String? @db.Text // Flow drawer image URL for slot 5 stored in Cloudinary
   lastSeen          DateTime @default(now())
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
