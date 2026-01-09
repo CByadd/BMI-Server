@@ -310,7 +310,7 @@ exports.createUser = async (req, res) => {
  */
 exports.paymentSuccess = async (req, res, io) => {
     try {
-        const { userId, bmiId, appVersion } = req.body || {};
+        const { userId, bmiId, appVersion, paymentToken } = req.body || {};
         const paymentReceivedTime = new Date().toISOString();
         
         // ========== PAYMENT FLOW LOGGING - PAYMENT RECEIVED (SERVER) ==========
@@ -320,6 +320,7 @@ exports.paymentSuccess = async (req, res, io) => {
         console.log('[PAYMENT_FLOW] BMI ID:', bmiId);
         console.log('[PAYMENT_FLOW] User ID:', userId);
         console.log('[PAYMENT_FLOW] App Version:', appVersion);
+        console.log('[PAYMENT_FLOW] Payment Token:', paymentToken || 'Not provided');
         console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
         console.log('═══════════════════════════════════════════════════════════════');
         
@@ -375,7 +376,8 @@ exports.paymentSuccess = async (req, res, io) => {
                 category: updatedBMI.category,
                 height: updatedBMI.heightCm,
                 weight: updatedBMI.weightKg,
-                timestamp: updatedBMI.timestamp.toISOString()
+                timestamp: updatedBMI.timestamp.toISOString(),
+                paymentToken: paymentToken || null // Include payment token for Android verification
             };
             
             // ========== PAYMENT FLOW LOGGING - EMITTING TO ANDROID ==========
