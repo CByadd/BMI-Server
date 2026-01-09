@@ -25,7 +25,8 @@ const io = new Server(server, {
 			'http://127.0.0.1:5500',
             'https://bmi-client.onrender.com',
             'https://bmi-admin-pi.vercel.app',
-			'*' // Allow all for development
+             'http://4.240.88.83'
+			
 		],
 		methods: ['GET', 'POST'],
 		allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
