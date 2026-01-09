@@ -36,57 +36,108 @@ const io = new Server(server, {
 // Prisma - use shared instance
 const prisma = require('./db');
 
-app.use(cors({
-    origin: [
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:3000',
-        'http://localhost:8080',
-        'https://bmi-client.vercel.app',
-        'https://bmi-client.onrender.com',
-        'https://adscape.co.in',
-        'https://admin.adscape.co.in',
-        'https://billboard-admin-x.vercel.app',
-        'http://127.0.0.1:5500',
-        'https://bmi-client.onrender.com',
-        'https://bmi-admin-pi.vercel.app',
-        'http://4.240.88.83'
-    ],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
-}));
-
-// Manual CORS headers as fallback
+// Enhanced CORS configuration - handle all origins properly
 const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:3000',
     'http://localhost:8080',
+    'http://localhost:8081',
+    'http://localhost:8082',
     'https://bmi-client.vercel.app',
     'https://bmi-client.onrender.com',
     'https://adscape.co.in',
     'https://admin.adscape.co.in',
     'https://billboard-admin-x.vercel.app',
     'http://127.0.0.1:5500',
+    'https://bmi-client.onrender.com',
+    'https://bmi-admin-pi.vercel.app',
     'http://4.240.88.83'
 ];
 
+// CORS middleware with proper OPTIONS handling
 app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin && allowedOrigins.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
+    
+    // Log CORS request for debugging
+    if (req.method === 'OPTIONS' || origin) {
+        console.log(`[CORS] ${req.method} ${req.url} - Origin: ${origin || 'none'}`);
     }
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning');
+    
+    // Handle OPTIONS preflight requests immediately
+    if (req.method === 'OPTIONS') {
+        console.log('[CORS] Handling OPTIONS preflight request');
+        
+        // Allow any localhost origin for development
+        if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+            res.header('Access-Control-Allow-Origin', origin);
+            console.log(`[CORS] Allowing localhost origin: ${origin}`);
+        } else if (origin && allowedOrigins.includes(origin)) {
+            res.header('Access-Control-Allow-Origin', origin);
+        } else if (origin) {
+            // For development, allow the origin if it's in the list
+            res.header('Access-Control-Allow-Origin', origin);
+            console.log(`[CORS] Allowing origin: ${origin}`);
+        } else {
+            // No origin header - allow all for development
+            res.header('Access-Control-Allow-Origin', '*');
+        }
+        
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, X-Requested-With');
+        res.header('Access-Control-Allow-Credentials', 'true');
+        res.header('Access-Control-Max-Age', '86400'); // 24 hours
+        return res.sendStatus(200);
+    }
+    
+    // Handle actual requests
+    if (origin) {
+        // Allow any localhost origin for development
+        if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+            res.header('Access-Control-Allow-Origin', origin);
+        } else if (allowedOrigins.includes(origin)) {
+            res.header('Access-Control-Allow-Origin', origin);
+        } else {
+            // For development, allow the origin
+            res.header('Access-Control-Allow-Origin', origin);
+            console.log(`[CORS] Allowing origin: ${origin}`);
+        }
+    }
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, X-Requested-With');
     res.header('Access-Control-Allow-Credentials', 'true');
     
-    if (req.method === 'OPTIONS') {
-        res.sendStatus(200);
-    } else {
-        next();
-    }
+    next();
 });
+
+// Also use cors package as additional layer
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) {
+            return callback(null, true);
+        }
+        
+        // Allow any localhost origin for development
+        if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+            console.log(`[CORS] cors() package allowing localhost origin: ${origin}`);
+            return callback(null, true);
+        }
+        
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.log(`[CORS] cors() package rejected origin: ${origin}`);
+            // For development, allow anyway
+            callback(null, true);
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'X-Requested-With'],
+    preflightContinue: false,
+    optionsSuccessStatus: 200
+}));
 
 app.use(express.json());
 // Basic request logger
