@@ -310,7 +310,7 @@ exports.createUser = async (req, res) => {
  */
 exports.paymentSuccess = async (req, res, io) => {
     try {
-        const { userId, bmiId, appVersion, paymentToken } = req.body || {};
+        const { userId, bmiId, appVersion, paymentToken, paymentAmount: paymentAmountFromRequest } = req.body || {};
         const paymentReceivedTime = new Date().toISOString();
         
         // ========== PAYMENT FLOW LOGGING - PAYMENT RECEIVED (SERVER) ==========
@@ -321,6 +321,7 @@ exports.paymentSuccess = async (req, res, io) => {
         console.log('[PAYMENT_FLOW] User ID:', userId);
         console.log('[PAYMENT_FLOW] App Version:', appVersion);
         console.log('[PAYMENT_FLOW] Payment Token:', paymentToken || 'Not provided');
+        console.log('[PAYMENT_FLOW] Payment Amount (from request):', paymentAmountFromRequest);
         console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
         console.log('═══════════════════════════════════════════════════════════════');
         
@@ -339,32 +340,66 @@ exports.paymentSuccess = async (req, res, io) => {
             return res.status(404).json({ error: 'BMI record not found' });
         }
         
-        // Get payment amount from screen configuration
+        // Use payment amount from request if provided, otherwise fallback to screen configuration
         let paymentAmount = null;
-        try {
-            const screenResult = await prisma.$queryRaw`
-                SELECT "paymentAmount" 
-                FROM "AdscapePlayer" 
-                WHERE "screenId" = ${String(bmiRecord.screenId)}
-                LIMIT 1
-            `;
-            if (screenResult && screenResult.length > 0 && screenResult[0].paymentAmount !== null && screenResult[0].paymentAmount !== undefined) {
-                paymentAmount = parseFloat(screenResult[0].paymentAmount);
+        if (paymentAmountFromRequest !== null && paymentAmountFromRequest !== undefined) {
+            paymentAmount = parseFloat(paymentAmountFromRequest);
+            console.log('[PAYMENT_FLOW] Using payment amount from request:', paymentAmount);
+        } else {
+            // Fallback: Get payment amount from screen configuration
+            try {
+                const screenResult = await prisma.$queryRaw`
+                    SELECT "paymentAmount" 
+                    FROM "AdscapePlayer" 
+                    WHERE "screenId" = ${String(bmiRecord.screenId)}
+                    LIMIT 1
+                `;
+                if (screenResult && screenResult.length > 0 && screenResult[0].paymentAmount !== null && screenResult[0].paymentAmount !== undefined) {
+                    paymentAmount = parseFloat(screenResult[0].paymentAmount);
+                    console.log('[PAYMENT_FLOW] Using payment amount from screen config:', paymentAmount);
+                }
+            } catch (e) {
+                console.log('[PAYMENT_FLOW] Error fetching payment amount from screen config:', e.message);
             }
-        } catch (e) {
-            console.log('[PAYMENT_FLOW] Error fetching payment amount from screen config:', e.message);
         }
         
-        // Update BMI record with user, payment status, and payment amount
-        const updatedBMI = await prisma.bMI.update({
+        console.log('[PAYMENT_FLOW] Final payment amount to be saved:', paymentAmount);
+        
+        // Update BMI record with user, payment status, and payment amount using raw SQL to handle new columns
+        try {
+            await prisma.$executeRaw`
+                UPDATE "BMI"
+                SET "userId" = ${userId},
+                    "paymentStatus" = true,
+                    "paymentAmount" = ${paymentAmount}
+                WHERE id = ${bmiId}
+            `;
+        } catch (e) {
+            // If columns don't exist, try with Prisma update (will fail if columns don't exist in schema)
+            if (e.code === '42703' || e.message?.includes('does not exist')) {
+                console.log('[PAYMENT_FLOW] Payment columns may not exist, trying Prisma update...');
+                await prisma.bMI.update({
+                    where: { id: bmiId },
+                    data: { 
+                        userId: userId,
+                        paymentStatus: true,
+                        paymentAmount: paymentAmount
+                    }
+                });
+            } else {
+                throw e;
+            }
+        }
+        
+        // Fetch updated BMI record
+        const updatedBMI = await prisma.bMI.findUnique({
             where: { id: bmiId },
-            data: { 
-                userId: userId,
-                paymentStatus: true,
-                paymentAmount: paymentAmount
-            },
             include: { user: true, screen: true }
         });
+        
+        if (!updatedBMI) {
+            return res.status(404).json({ error: 'BMI record not found after update' });
+        }
         
         console.log('[PAYMENT_FLOW] ✅ BMI record updated with user:', updatedBMI.user?.name || 'Unknown');
         console.log('[PAYMENT_FLOW] User Details:', {

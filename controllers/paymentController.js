@@ -201,12 +201,17 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
         console.log('[PAYMENT_FLOW] User ID:', userId);
         console.log('[PAYMENT] Auto-triggering payment success notification for bmiId:', bmiId, 'userId:', userId);
         try {
+          // Get payment amount from order (convert from paise to rupees)
+          const paymentAmountInRupees = order.amount ? order.amount / 100 : null;
+          console.log('[PAYMENT_FLOW] Payment amount:', paymentAmountInRupees, 'rupees (from order amount:', order.amount, 'paise)');
+          
           // Call payment success handler directly
           const mockReq = {
             body: {
               userId: userId,
               bmiId: bmiId,
-              appVersion: 'f1' // Default to f1 for F1/F3 flows (will be normalized in paymentSuccess)
+              appVersion: 'f1', // Default to f1 for F1/F3 flows (will be normalized in paymentSuccess)
+              paymentAmount: paymentAmountInRupees // Pass actual payment amount paid by user
             }
           };
           const mockRes = {
