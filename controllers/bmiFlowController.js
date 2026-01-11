@@ -340,27 +340,26 @@ exports.paymentSuccess = async (req, res, io) => {
             return res.status(404).json({ error: 'BMI record not found' });
         }
         
-        // Use payment amount from request if provided, otherwise fallback to screen configuration
+        // Default payment amount (same as PaymentPage default) - only used if amount not provided from frontend
+        const DEFAULT_PAYMENT_AMOUNT = 9;
+        
+        // Use payment amount from request (actual amount paid by user from frontend payment confirmation)
+        // Don't rely on screen config - store the actual amount paid
         let paymentAmount = null;
         if (paymentAmountFromRequest !== null && paymentAmountFromRequest !== undefined) {
             paymentAmount = parseFloat(paymentAmountFromRequest);
-            console.log('[PAYMENT_FLOW] Using payment amount from request:', paymentAmount);
-        } else {
-            // Fallback: Get payment amount from screen configuration
-            try {
-                const screenResult = await prisma.$queryRaw`
-                    SELECT "paymentAmount" 
-                    FROM "AdscapePlayer" 
-                    WHERE "screenId" = ${String(bmiRecord.screenId)}
-                    LIMIT 1
-                `;
-                if (screenResult && screenResult.length > 0 && screenResult[0].paymentAmount !== null && screenResult[0].paymentAmount !== undefined) {
-                    paymentAmount = parseFloat(screenResult[0].paymentAmount);
-                    console.log('[PAYMENT_FLOW] Using payment amount from screen config:', paymentAmount);
-                }
-            } catch (e) {
-                console.log('[PAYMENT_FLOW] Error fetching payment amount from screen config:', e.message);
+            if (!isNaN(paymentAmount) && paymentAmount > 0) {
+                console.log('[PAYMENT_FLOW] Using payment amount from frontend (actual amount paid):', paymentAmount);
+            } else {
+                paymentAmount = null;
+                console.log('[PAYMENT_FLOW] Payment amount from request is invalid');
             }
+        }
+        
+        // If payment amount not provided from frontend, use default (don't rely on screen config)
+        if (paymentAmount === null || paymentAmount === undefined || isNaN(paymentAmount) || paymentAmount <= 0) {
+            paymentAmount = DEFAULT_PAYMENT_AMOUNT;
+            console.log('[PAYMENT_FLOW] Payment amount not provided from frontend, using default:', paymentAmount);
         }
         
         console.log('[PAYMENT_FLOW] Final payment amount to be saved:', paymentAmount);
@@ -380,13 +379,14 @@ exports.paymentSuccess = async (req, res, io) => {
                 console.log('[PAYMENT_FLOW] Payment columns may not exist, trying Prisma update...');
                 await prisma.bMI.update({
                     where: { id: bmiId },
-                    data: { 
+                    data: {
                         userId: userId,
                         paymentStatus: true,
                         paymentAmount: paymentAmount
                     }
                 });
             } else {
+                console.error('[PAYMENT_FLOW] Error updating BMI record:', e);
                 throw e;
             }
         }
