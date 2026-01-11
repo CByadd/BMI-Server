@@ -14,33 +14,34 @@ model Screen {
 }
 
 model AdscapePlayer {
-  id                String   @id @default(uuid()) @db.Uuid
-  screenId          String   @unique @db.VarChar(64)
-  appVersion        String   @db.VarChar(10) // F1, F2, F3
-  flowType          String?  @db.VarChar(10) // F1, F2, or null for normal player
-  deviceName        String?  @db.VarChar(255)
-  screenWidth       Int?
-  screenHeight      Int?
-  ipAddress         String?  @db.VarChar(45)
-  location          String?  @db.VarChar(255)
-  osVersion         String?  @db.VarChar(50)
-  appVersionCode    String?  @db.VarChar(20)
-  heightCalibration Float?   @default(0) // Height calibration offset in cm (added/subtracted from sensor reading)
-  paymentAmount     Float? // Payment amount in currency (e.g., 9.0 for ₹9)
-  logoUrl           String?  @db.Text // Logo URL stored in Cloudinary
-  playlistId        String?  @db.VarChar(255) // Playlist ID assigned to this screen
-  flowDrawerEnabled Boolean? @default(true) // Enable/disable drawer shown when flow is active
-  flowDrawerSlotCount Int? @default(2) // Number of slots: 2, 3, or 5
-  flowDrawerSlots Json? // Array of image URLs: [url1, url2, ...] stored in Cloudinary
-  flowDrawerImage1Url String? @db.Text // Flow drawer image URL for slot 1 stored in Cloudinary
-  flowDrawerImage2Url String? @db.Text // Flow drawer image URL for slot 2 stored in Cloudinary
-  flowDrawerImage3Url String? @db.Text // Flow drawer image URL for slot 3 stored in Cloudinary
-  flowDrawerImage4Url String? @db.Text // Flow drawer image URL for slot 4 stored in Cloudinary
-  flowDrawerImage5Url String? @db.Text // Flow drawer image URL for slot 5 stored in Cloudinary
-  lastSeen          DateTime @default(now())
-  isActive          Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                  String   @id @default(uuid()) @db.Uuid
+  screenId            String   @unique @db.VarChar(64)
+  appVersion          String   @db.VarChar(10) // F1, F2, F3
+  flowType            String?  @db.VarChar(10) // F1, F2, or null for normal player
+  deviceName          String?  @db.VarChar(255)
+  screenWidth         Int?
+  screenHeight        Int?
+  ipAddress           String?  @db.VarChar(45)
+  location            String?  @db.VarChar(255)
+  osVersion           String?  @db.VarChar(50)
+  appVersionCode      String?  @db.VarChar(20)
+  heightCalibration   Float?   @default(0) // Height calibration offset in cm (added/subtracted from sensor reading)
+  paymentAmount       Float? // Payment amount in currency (e.g., 9.0 for ₹9)
+  logoUrl             String?  @db.Text // Logo URL stored in Cloudinary
+  playlistId          String?  @db.VarChar(255) // Playlist ID assigned to this screen
+  flowDrawerEnabled   Boolean? @default(true) // Enable/disable drawer shown when flow is active
+  flowDrawerSlotCount Int?     @default(2) // Number of slots: 2, 3, or 5
+  hideScreenId        Boolean? @default(false) // Hide screen ID display (when true, screen ID is hidden)
+  flowDrawerSlots     Json? // Array of image URLs: [url1, url2, ...] stored in Cloudinary
+  flowDrawerImage1Url String?  @db.Text // Flow drawer image URL for slot 1 stored in Cloudinary
+  flowDrawerImage2Url String?  @db.Text // Flow drawer image URL for slot 2 stored in Cloudinary
+  flowDrawerImage3Url String?  @db.Text // Flow drawer image URL for slot 3 stored in Cloudinary
+  flowDrawerImage4Url String?  @db.Text // Flow drawer image URL for slot 4 stored in Cloudinary
+  flowDrawerImage5Url String?  @db.Text // Flow drawer image URL for slot 5 stored in Cloudinary
+  lastSeen            DateTime @default(now())
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model User {
@@ -52,20 +53,22 @@ model User {
 }
 
 model BMI {
-  id         String   @id @db.Uuid
-  screenId   String
-  screen     Screen   @relation(fields: [screenId], references: [id], onDelete: Cascade)
-  userId     String?  @db.Uuid
-  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  heightCm   Float
-  weightKg   Float
-  bmi        Float
-  category   String
-  timestamp  DateTime @default(now())
-  deviceId   String?  @db.VarChar(255)
-  appVersion String?  @db.VarChar(10)
-  location   String?  @db.VarChar(255)
-  fortune    String?  @db.Text
+  id            String   @id @db.Uuid
+  screenId      String
+  screen        Screen   @relation(fields: [screenId], references: [id], onDelete: Cascade)
+  userId        String?  @db.Uuid
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  heightCm      Float
+  weightKg      Float
+  bmi           Float
+  category      String
+  timestamp     DateTime @default(now())
+  deviceId      String?  @db.VarChar(255)
+  appVersion    String?  @db.VarChar(10)
+  location      String?  @db.VarChar(255)
+  fortune       String?  @db.Text
+  paymentStatus Boolean? @default(false) // Whether payment was completed for this BMI record
+  paymentAmount Float? // Actual amount paid by the user in rupees
 
   @@index([screenId])
   @@index([userId])

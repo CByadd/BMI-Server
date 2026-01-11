@@ -141,7 +141,7 @@ exports.getPlayer = async (req, res) => {
             }
         }
         
-        // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, flowDrawerSlots, and flow drawer images using raw SQL (columns might not exist yet)
+        // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, flowDrawerSlots, hideScreenId, and flow drawer images using raw SQL (columns might not exist yet)
         let playlistId = null;
         let heightCalibration = 0;
         let heightCalibrationEnabled = true;
@@ -149,6 +149,7 @@ exports.getPlayer = async (req, res) => {
         let logoUrl = null;
         let flowDrawerEnabled = true;
         let flowDrawerSlotCount = 2;
+        let hideScreenId = false;
         let flowDrawerSlots = [];
         let flowDrawerImage1Url = null;
         let flowDrawerImage2Url = null;
@@ -157,7 +158,7 @@ exports.getPlayer = async (req, res) => {
         let flowDrawerImage5Url = null;
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", 
+                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", "hideScreenId",
                        "flowDrawerImage1Url", "flowDrawerImage2Url", "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
                 FROM "AdscapePlayer" 
                 WHERE "screenId" = ${String(screenId)} 
@@ -182,6 +183,9 @@ exports.getPlayer = async (req, res) => {
                 }
                 if (configResult[0].flowDrawerSlotCount !== null && configResult[0].flowDrawerSlotCount !== undefined) {
                     flowDrawerSlotCount = parseInt(configResult[0].flowDrawerSlotCount) || 2;
+                }
+                if (configResult[0].hideScreenId !== null && configResult[0].hideScreenId !== undefined) {
+                    hideScreenId = Boolean(configResult[0].hideScreenId);
                 }
                 
                 // Get individual URL fields
@@ -236,6 +240,7 @@ exports.getPlayer = async (req, res) => {
                 flowDrawerEnabled: flowDrawerEnabled,
                 flowDrawerSlotCount: flowDrawerSlotCount,
                 flowDrawerSlots: flowDrawerSlots,
+                hideScreenId: hideScreenId,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 isEnabled: player.isActive, // Also include isEnabled for Android app compatibility
@@ -267,7 +272,7 @@ exports.getAllPlayers = async (req, res) => {
             ? {}
             : { screenId: { in: req.user.assignedScreenIds } };
         
-        // Try to get players with heightCalibration using raw SQL, fallback if column doesn't exist
+        // Try to get players with heightCalibration, paymentAmount, playlistId, flowDrawerEnabled using raw SQL, fallback if columns don't exist
         let players;
         try {
             if (req.user.role === 'super_admin') {
@@ -276,7 +281,8 @@ exports.getAllPlayers = async (req, res) => {
                         id, "screenId", "appVersion", "flowType", "deviceName", 
                         "screenWidth", "screenHeight", "ipAddress", location, 
                         "osVersion", "lastSeen", "isActive", "createdAt",
-                        COALESCE("heightCalibration", 0) as "heightCalibration"
+                        COALESCE("heightCalibration", 0) as "heightCalibration",
+                        "paymentAmount", "playlistId", COALESCE("flowDrawerEnabled", true) as "flowDrawerEnabled"
                     FROM "AdscapePlayer"
                     ORDER BY "createdAt" DESC
                 `;
@@ -290,7 +296,8 @@ exports.getAllPlayers = async (req, res) => {
                             id, "screenId", "appVersion", "flowType", "deviceName", 
                             "screenWidth", "screenHeight", "ipAddress", location, 
                             "osVersion", "lastSeen", "isActive", "createdAt",
-                            COALESCE("heightCalibration", 0) as "heightCalibration"
+                            COALESCE("heightCalibration", 0) as "heightCalibration",
+                            "paymentAmount", "playlistId", COALESCE("flowDrawerEnabled", true) as "flowDrawerEnabled"
                         FROM "AdscapePlayer"
                         WHERE "screenId" = ANY(${screenIds})
                         ORDER BY "createdAt" DESC
@@ -309,7 +316,7 @@ exports.getAllPlayers = async (req, res) => {
                     FROM "AdscapePlayer"
                     ORDER BY "createdAt" DESC
                 `;
-                players = rawPlayers.map(p => ({ ...p, heightCalibration: 0 }));
+                players = rawPlayers.map(p => ({ ...p, heightCalibration: 0, paymentAmount: null, playlistId: null, flowDrawerEnabled: true }));
             } else {
                 const screenIds = req.user.assignedScreenIds;
                 if (screenIds.length === 0) {
@@ -324,7 +331,7 @@ exports.getAllPlayers = async (req, res) => {
                         WHERE "screenId" = ANY(${screenIds})
                         ORDER BY "createdAt" DESC
                     `;
-                    players = rawPlayers.map(p => ({ ...p, heightCalibration: 0 }));
+                    players = rawPlayers.map(p => ({ ...p, heightCalibration: 0, paymentAmount: null, playlistId: null, flowDrawerEnabled: true }));
                 }
             }
         }
@@ -343,6 +350,9 @@ exports.getAllPlayers = async (req, res) => {
                 location: player.location,
                 osVersion: player.osVersion,
                 heightCalibration: player.heightCalibration ?? 0,
+                paymentAmount: player.paymentAmount ?? null,
+                playlistId: player.playlistId ?? null,
+                flowDrawerEnabled: player.flowDrawerEnabled ?? true,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 createdAt: player.createdAt
@@ -1028,7 +1038,7 @@ exports.deleteFlowDrawerImage = async (req, res) => {
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId } = req.body || {};
         
         console.log('[ADSCAPE] Update screen config request:', { 
             screenId, 
@@ -1087,6 +1097,10 @@ exports.updateScreenConfig = async (req, res, io) => {
         
         if (flowDrawerEnabled !== undefined) {
             updateData.flowDrawerEnabled = Boolean(flowDrawerEnabled);
+        }
+        
+        if (hideScreenId !== undefined) {
+            updateData.hideScreenId = Boolean(hideScreenId);
         }
         
         if (flowDrawerSlotCount !== undefined) {
@@ -1179,20 +1193,22 @@ exports.updateScreenConfig = async (req, res, io) => {
         // Update player config
         let player = null;
         if (Object.keys(updateData).length > 0) {
-            // Check if heightCalibration, heightCalibrationEnabled, paymentAmount, or flowDrawerEnabled is in updateData - if so, use raw SQL to update them
+            // Check if heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, or hideScreenId is in updateData - if so, use raw SQL to update them
             // (This is a workaround until Prisma client is regenerated on Vercel)
             const hasHeightCalibration = 'heightCalibration' in updateData;
             const hasHeightCalibrationEnabled = 'heightCalibrationEnabled' in updateData;
             const hasPaymentAmount = 'paymentAmount' in updateData;
             const hasFlowDrawerEnabled = 'flowDrawerEnabled' in updateData;
+            const hasHideScreenId = 'hideScreenId' in updateData;
             const heightCalibrationValue = updateData.heightCalibration;
             const heightCalibrationEnabledValue = updateData.heightCalibrationEnabled;
             const paymentAmountValue = updateData.paymentAmount;
             const flowDrawerEnabledValue = updateData.flowDrawerEnabled;
+            const hideScreenIdValue = updateData.hideScreenId;
             
-            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled) {
-                // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, and flowDrawerEnabled from updateData for Prisma update
-                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, ...prismaUpdateData } = updateData;
+            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId) {
+                // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, and hideScreenId from updateData for Prisma update
+                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, ...prismaUpdateData } = updateData;
                 
                 // Update other fields with Prisma if there are any
                 if (Object.keys(prismaUpdateData).length > 0) {
@@ -1322,6 +1338,33 @@ exports.updateScreenConfig = async (req, res, io) => {
                             await prisma.$executeRaw`
                                 UPDATE "AdscapePlayer"
                                 SET "flowDrawerEnabled" = ${flowDrawerEnabledValue}
+                                WHERE "screenId" = ${String(screenId)}
+                            `;
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+                
+                if (hasHideScreenId) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "hideScreenId" = ${hideScreenIdValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        // Column doesn't exist, create it first
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            console.log('[ADSCAPE] hideScreenId column does not exist, creating it...');
+                            await prisma.$executeRawUnsafe(`
+                                ALTER TABLE "AdscapePlayer" 
+                                ADD COLUMN IF NOT EXISTS "hideScreenId" BOOLEAN DEFAULT false
+                            `);
+                            // Now update it
+                            await prisma.$executeRaw`
+                                UPDATE "AdscapePlayer"
+                                SET "hideScreenId" = ${hideScreenIdValue}
                                 WHERE "screenId" = ${String(screenId)}
                             `;
                         } else {
@@ -1518,6 +1561,23 @@ exports.updateScreenConfig = async (req, res, io) => {
             // Column doesn't exist yet, use default true
             flowDrawerEnabledValue = true;
         }
+        
+        // Get hideScreenId from player
+        let hideScreenIdValue = false;
+        try {
+            const hideScreenIdResult = await prisma.$queryRaw`
+                SELECT COALESCE("hideScreenId", false) as "hideScreenId" 
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(screenId)} 
+                LIMIT 1
+            `;
+            if (hideScreenIdResult && hideScreenIdResult.length > 0) {
+                hideScreenIdValue = Boolean(hideScreenIdResult[0].hideScreenId);
+            }
+        } catch (e) {
+            // Column doesn't exist yet, use default false
+            hideScreenIdValue = false;
+        }
 
         return res.json({
             ok: true,
@@ -1531,7 +1591,8 @@ exports.updateScreenConfig = async (req, res, io) => {
                 heightCalibration: heightCalibrationValue,
                 playlistId: currentPlaylistId,
                 logoUrl: logoUrlValue,
-                flowDrawerEnabled: flowDrawerEnabledValue
+                flowDrawerEnabled: flowDrawerEnabledValue,
+                hideScreenId: hideScreenIdValue
             }
         });
     } catch (e) {

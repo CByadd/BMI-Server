@@ -440,7 +440,9 @@ exports.getScreenBMIRecords = async (req, res) => {
       bmi: record.bmi,
       category: record.category,
       location: record.location || '-',
-      waterIntake: null // Not stored in BMI table, can be calculated or added later
+      waterIntake: null, // Not stored in BMI table, can be calculated or added later
+      paymentStatus: record.paymentStatus || false,
+      paymentAmount: record.paymentAmount || null
     }));
     
     // Calculate stats

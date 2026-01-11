@@ -177,54 +177,6 @@ exports.getAssetsByScreen = async (req, res) => {
   }
 };
 
-// Track asset play
-exports.trackAssetPlay = async (req, res) => {
-  try {
-    const { screen_id, asset_url, played_at, campaign_id } = req.body;
-
-    // Insert play log
-    await prisma.$queryRaw`
-      INSERT INTO asset_play_logs (screen_id, asset_url, campaign_id, played_at)
-      VALUES (${screen_id}, ${asset_url}, ${campaign_id || null}, ${played_at ? new Date(played_at) : new Date()})
-    `;
-
-    res.json({ ok: true, message: 'Play tracked successfully' });
-  } catch (error) {
-    console.error('Error tracking play:', error);
-    res.status(500).json({ error: 'Failed to track play' });
-  }
-};
-
-// Get asset logs
-exports.getAssetLogs = async (req, res) => {
-  try {
-    const { screenId, campaignId, limit = 100 } = req.query;
-
-    let query = 'SELECT * FROM asset_play_logs WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
-
-    if (screenId) {
-      query += ` AND screen_id = $${paramIndex++}`;
-      params.push(screenId);
-    }
-
-    if (campaignId) {
-      query += ` AND campaign_id = $${paramIndex++}`;
-      params.push(campaignId);
-    }
-
-    query += ` ORDER BY played_at DESC LIMIT $${paramIndex++}`;
-    params.push(parseInt(limit));
-
-    const logs = await prisma.$queryRawUnsafe(query, ...params);
-
-    res.json(logs);
-  } catch (error) {
-    console.error('Error fetching asset logs:', error);
-    res.status(500).json({ error: 'Failed to fetch asset logs' });
-  }
-};
 
 
 

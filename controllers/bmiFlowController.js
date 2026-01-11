@@ -329,10 +329,40 @@ exports.paymentSuccess = async (req, res, io) => {
             return res.status(400).json({ error: 'userId, bmiId required' });
         }
         
-        // Update BMI record with user
+        // Get BMI record first to get screenId
+        const bmiRecord = await prisma.bMI.findUnique({
+            where: { id: bmiId },
+            select: { screenId: true }
+        });
+        
+        if (!bmiRecord) {
+            return res.status(404).json({ error: 'BMI record not found' });
+        }
+        
+        // Get payment amount from screen configuration
+        let paymentAmount = null;
+        try {
+            const screenResult = await prisma.$queryRaw`
+                SELECT "paymentAmount" 
+                FROM "AdscapePlayer" 
+                WHERE "screenId" = ${String(bmiRecord.screenId)}
+                LIMIT 1
+            `;
+            if (screenResult && screenResult.length > 0 && screenResult[0].paymentAmount !== null && screenResult[0].paymentAmount !== undefined) {
+                paymentAmount = parseFloat(screenResult[0].paymentAmount);
+            }
+        } catch (e) {
+            console.log('[PAYMENT_FLOW] Error fetching payment amount from screen config:', e.message);
+        }
+        
+        // Update BMI record with user, payment status, and payment amount
         const updatedBMI = await prisma.bMI.update({
             where: { id: bmiId },
-            data: { userId: userId },
+            data: { 
+                userId: userId,
+                paymentStatus: true,
+                paymentAmount: paymentAmount
+            },
             include: { user: true, screen: true }
         });
         
