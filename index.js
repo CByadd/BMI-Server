@@ -25,7 +25,9 @@ const io = new Server(server, {
 			'http://127.0.0.1:5500',
             'https://bmi-client.onrender.com',
             'https://bmi-admin-pi.vercel.app',
-             'http://4.240.88.83'
+             'http://4.240.88.83',
+             'https://api.well2day.in'
+
 			
 		],
 		methods: ['GET', 'POST'],
@@ -52,7 +54,8 @@ const allowedOrigins = [
     'http://127.0.0.1:5500',
     'https://bmi-client.onrender.com',
     'https://bmi-admin-pi.vercel.app',
-    'http://4.240.88.83'
+    'http://4.240.88.83',
+    'https://api.well2day.in'
 ];
 
 // CORS middleware with proper OPTIONS handling
@@ -248,6 +251,10 @@ io.on('connection', (socket) => {
 
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+// Health Tips
+const healthTipsController = require('./controllers/healthTipsController');
+app.get('/api/health-tips/:category', healthTipsController.getHealthTips);
 
 // Note: Adscape registration is now handled by screenRoutes
 // POST /api/adscape/register -> Register Adscape player (moved to routes/screenRoutes.js)

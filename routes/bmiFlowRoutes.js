@@ -7,8 +7,11 @@ module.exports = (io) => {
     // POST /api/bmi -> Create BMI record
     router.post('/bmi', (req, res) => bmiFlowController.createBMI(req, res, io));
 
-    // POST /api/user -> Create or find user
+    // POST /api/user -> Create new user (returns error if user exists)
     router.post('/user', bmiFlowController.createUser);
+    
+    // POST /api/user/login -> Login user by mobile (returns error if user doesn't exist)
+    router.post('/user/login', bmiFlowController.loginUser);
 
     // POST /api/payment-success -> Link user to BMI and emit to Android
     router.post('/payment-success', (req, res) => bmiFlowController.paymentSuccess(req, res, io));

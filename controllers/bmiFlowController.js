@@ -275,32 +275,69 @@ exports.createBMI = async (req, res, io) => {
 };
 
 /**
- * POST /api/user -> { name, mobile } -> create or find user
+ * POST /api/user -> { name, gender, age, mobile } -> create new user
+ * Returns error if user already exists
  */
 exports.createUser = async (req, res) => {
     try {
-        const { name, mobile } = req.body || {};
+        const { name, gender, age, mobile } = req.body || {};
         if (!name || !mobile) {
             return res.status(400).json({ error: 'name, mobile required' });
         }
         
-        // Try to find existing user by mobile, otherwise create new
-        let user = await prisma.user.findFirst({
+        // Check if user already exists
+        const existingUser = await prisma.user.findFirst({
+            where: { mobile: String(mobile) }
+        });
+        
+        if (existingUser) {
+            return res.status(409).json({ error: 'User already exists with this mobile number. Please login instead.' });
+        }
+        
+        // Create new user
+        const user = await prisma.user.create({
+            data: {
+                name: String(name),
+                mobile: String(mobile),
+                gender: gender ? String(gender) : null,
+                age: age ? parseInt(age) : null
+            }
+        });
+        
+        return res.json({ userId: user.id, name: user.name, mobile: user.mobile, gender: user.gender, age: user.age });
+    } catch (e) {
+        console.error('[USER] POST /api/user error', e);
+        if (e.code === 'P2002') {
+            // Prisma unique constraint violation
+            return res.status(409).json({ error: 'User already exists with this mobile number. Please login instead.' });
+        }
+        return res.status(500).json({ error: 'internal_error' });
+    }
+};
+
+/**
+ * POST /api/user/login -> { mobile } -> find user by mobile
+ * Returns error if user doesn't exist
+ */
+exports.loginUser = async (req, res) => {
+    try {
+        const { mobile } = req.body || {};
+        if (!mobile) {
+            return res.status(400).json({ error: 'mobile required' });
+        }
+        
+        // Find user by mobile
+        const user = await prisma.user.findFirst({
             where: { mobile: String(mobile) }
         });
         
         if (!user) {
-            user = await prisma.user.create({
-                data: {
-                    name: String(name),
-                    mobile: String(mobile)
-                }
-            });
+            return res.status(404).json({ error: 'User not found. Please create an account first.' });
         }
         
-        return res.json({ userId: user.id, name: user.name, mobile: user.mobile });
+        return res.json({ userId: user.id, name: user.name, mobile: user.mobile, gender: user.gender, age: user.age });
     } catch (e) {
-        console.error('[USER] POST /api/user error', e);
+        console.error('[USER] POST /api/user/login error', e);
         return res.status(500).json({ error: 'internal_error' });
     }
 };
@@ -322,6 +359,7 @@ exports.paymentSuccess = async (req, res, io) => {
         console.log('[PAYMENT_FLOW] App Version:', appVersion);
         console.log('[PAYMENT_FLOW] Payment Token:', paymentToken || 'Not provided');
         console.log('[PAYMENT_FLOW] Payment Amount (from request):', paymentAmountFromRequest);
+        console.log('[PAYMENT_FLOW] Full request body:', JSON.stringify(req.body, null, 2));
         console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
         console.log('═══════════════════════════════════════════════════════════════');
         
@@ -373,29 +411,96 @@ exports.paymentSuccess = async (req, res, io) => {
                     "paymentAmount" = ${paymentAmount}
                 WHERE id = ${bmiId}
             `;
+            console.log('[PAYMENT_FLOW] ✅ BMI record updated successfully with payment amount:', paymentAmount);
         } catch (e) {
-            // If columns don't exist, try with Prisma update (will fail if columns don't exist in schema)
+            // If columns don't exist, create them first
             if (e.code === '42703' || e.message?.includes('does not exist')) {
-                console.log('[PAYMENT_FLOW] Payment columns may not exist, trying Prisma update...');
-                await prisma.bMI.update({
-                    where: { id: bmiId },
-                    data: {
-                        userId: userId,
-                        paymentStatus: true,
-                        paymentAmount: paymentAmount
+                console.log('[PAYMENT_FLOW] Payment columns do not exist, creating them...');
+                try {
+                    // Create paymentStatus column if it doesn't exist
+                    await prisma.$executeRawUnsafe(`
+                        ALTER TABLE "BMI" 
+                        ADD COLUMN IF NOT EXISTS "paymentStatus" BOOLEAN DEFAULT false
+                    `);
+                    console.log('[PAYMENT_FLOW] ✅ Created paymentStatus column');
+                    
+                    // Create paymentAmount column if it doesn't exist
+                    await prisma.$executeRawUnsafe(`
+                        ALTER TABLE "BMI" 
+                        ADD COLUMN IF NOT EXISTS "paymentAmount" DOUBLE PRECISION
+                    `);
+                    console.log('[PAYMENT_FLOW] ✅ Created paymentAmount column');
+                    
+                    // Now try the update again
+                    await prisma.$executeRaw`
+                        UPDATE "BMI"
+                        SET "userId" = ${userId},
+                            "paymentStatus" = true,
+                            "paymentAmount" = ${paymentAmount}
+                        WHERE id = ${bmiId}
+                    `;
+                    console.log('[PAYMENT_FLOW] ✅ BMI record updated successfully with payment amount after creating columns:', paymentAmount);
+                } catch (createError) {
+                    console.error('[PAYMENT_FLOW] Error creating columns or updating:', createError);
+                    // Fallback to Prisma update (will fail if columns don't exist in schema)
+                    try {
+                        await prisma.bMI.update({
+                            where: { id: bmiId },
+                            data: {
+                                userId: userId,
+                                paymentStatus: true,
+                                paymentAmount: paymentAmount
+                            }
+                        });
+                        console.log('[PAYMENT_FLOW] ✅ BMI record updated using Prisma after column creation');
+                    } catch (prismaError) {
+                        console.error('[PAYMENT_FLOW] ❌ Error updating BMI record with Prisma:', prismaError);
+                        throw prismaError;
                     }
-                });
+                }
             } else {
-                console.error('[PAYMENT_FLOW] Error updating BMI record:', e);
+                console.error('[PAYMENT_FLOW] ❌ Error updating BMI record:', e);
                 throw e;
             }
         }
         
-        // Fetch updated BMI record
-        const updatedBMI = await prisma.bMI.findUnique({
-            where: { id: bmiId },
-            include: { user: true, screen: true }
-        });
+        // Fetch updated BMI record and verify payment amount was saved
+        let updatedBMI;
+        try {
+            updatedBMI = await prisma.bMI.findUnique({
+                where: { id: bmiId },
+                include: { user: true, screen: true }
+            });
+        } catch (e) {
+            // If Prisma can't find it (columns might not exist in Prisma schema), use raw SQL
+            console.log('[PAYMENT_FLOW] Prisma findUnique failed, using raw SQL to verify...');
+            const verifyResult = await prisma.$queryRaw`
+                SELECT id, "userId", "paymentStatus", "paymentAmount"
+                FROM "BMI"
+                WHERE id = ${bmiId}
+                LIMIT 1
+            `;
+            if (verifyResult && verifyResult.length > 0) {
+                const record = verifyResult[0];
+                console.log('[PAYMENT_FLOW] ✅ Verified payment amount saved:', {
+                    bmiId: record.id,
+                    userId: record.userId,
+                    paymentStatus: record.paymentStatus,
+                    paymentAmount: record.paymentAmount
+                });
+                // Create a mock object for compatibility
+                updatedBMI = {
+                    id: record.id,
+                    userId: record.userId,
+                    paymentStatus: record.paymentStatus,
+                    paymentAmount: record.paymentAmount,
+                    user: null,
+                    screen: null
+                };
+            } else {
+                return res.status(404).json({ error: 'BMI record not found after update' });
+            }
+        }
         
         if (!updatedBMI) {
             return res.status(404).json({ error: 'BMI record not found after update' });
@@ -406,6 +511,10 @@ exports.paymentSuccess = async (req, res, io) => {
             userId: updatedBMI.userId,
             userName: updatedBMI.user?.name,
             userMobile: updatedBMI.user?.mobile
+        });
+        console.log('[PAYMENT_FLOW] ✅ Payment Details Saved:', {
+            paymentStatus: updatedBMI.paymentStatus,
+            paymentAmount: updatedBMI.paymentAmount
         });
         
         // Normalize appVersion for consistent comparison (case-insensitive)

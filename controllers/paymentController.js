@@ -161,8 +161,10 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
 
     // Automatically trigger payment success notification to Android after payment verification
     // This ensures Android receives confirmation immediately after payment verification
+    console.log('[PAYMENT_FLOW] Checking if order exists in store:', razorpay_order_id, 'Exists:', mockOrderStore.has(razorpay_order_id));
     if (mockOrderStore.has(razorpay_order_id) && io && bmiFlowController) {
       const order = mockOrderStore.get(razorpay_order_id);
+      console.log('[PAYMENT_FLOW] Order found in store:', JSON.stringify(order, null, 2));
       const notes = order.notes || {};
       const userId = notes.userId;
       const screenId = notes.screenId;
@@ -200,10 +202,11 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
         console.log('[PAYMENT_FLOW] BMI ID:', bmiId);
         console.log('[PAYMENT_FLOW] User ID:', userId);
         console.log('[PAYMENT] Auto-triggering payment success notification for bmiId:', bmiId, 'userId:', userId);
+        console.log('[PAYMENT_FLOW] Order object:', JSON.stringify(order, null, 2));
         try {
           // Get payment amount from order (convert from paise to rupees)
           const paymentAmountInRupees = order.amount ? order.amount / 100 : null;
-          console.log('[PAYMENT_FLOW] Payment amount:', paymentAmountInRupees, 'rupees (from order amount:', order.amount, 'paise)');
+          console.log('[PAYMENT_FLOW] Payment amount from order:', paymentAmountInRupees, 'rupees (from order amount:', order.amount, 'paise)');
           
           // Call payment success handler directly
           const mockReq = {
@@ -214,6 +217,7 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
               paymentAmount: paymentAmountInRupees // Pass actual payment amount paid by user
             }
           };
+          console.log('[PAYMENT_FLOW] Mock request body being passed to paymentSuccess:', JSON.stringify(mockReq.body, null, 2));
           const mockRes = {
             json: (data) => {
               console.log('[PAYMENT_FLOW] ✅ Payment success notification triggered successfully');
