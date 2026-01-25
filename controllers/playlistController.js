@@ -15,17 +15,17 @@ exports.getAllPlaylists = async (req, res) => {
           SELECT * FROM playlists ORDER BY updated_at DESC
         `;
       } else if (adminId) {
-        playlists = await prisma.$queryRaw`
-          SELECT * FROM playlists 
-          WHERE created_by = ${adminId}
-          ORDER BY updated_at DESC
-        `;
+        // Use parameterized query; compare as text so it works whether created_by is UUID or VARCHAR
+        playlists = await prisma.$queryRawUnsafe(
+          'SELECT * FROM playlists WHERE created_by::text = $1 ORDER BY updated_at DESC',
+          String(adminId)
+        );
       } else {
         playlists = [];
       }
     } catch (dbError) {
-      // If table doesn't exist, return empty array
-      console.log('[PLAYLIST] Table may not exist, returning empty array');
+      // If table doesn't exist or created_by column/type mismatch, return empty array
+      console.log('[PLAYLIST] Table may not exist or query error:', dbError?.message);
     }
 
     // Transform database results to match frontend format
@@ -97,7 +97,8 @@ exports.getPlaylistById = async (req, res) => {
     }
 
     // Check access: super_admin can access all, regular admin can only access their own
-    if (userRole !== 'super_admin' && adminId && playlist.created_by !== adminId) {
+    const creatorId = playlist.created_by != null ? String(playlist.created_by) : null;
+    if (userRole !== 'super_admin' && adminId && creatorId !== String(adminId)) {
       return res.status(403).json({ error: 'Access denied to this playlist' });
     }
 
@@ -207,8 +208,8 @@ exports.updatePlaylist = async (req, res, io) => {
     // Check access if playlist exists
     if (existingResult && existingResult.length > 0) {
       const playlist = existingResult[0];
-      // Super admin can update any, regular admin can only update their own
-      if (userRole !== 'super_admin' && adminId && playlist.created_by !== adminId) {
+      const creatorId = playlist.created_by != null ? String(playlist.created_by) : null;
+      if (userRole !== 'super_admin' && adminId && creatorId !== String(adminId)) {
         return res.status(403).json({ error: 'You can only update playlists you created' });
       }
     }
@@ -335,8 +336,8 @@ exports.deletePlaylist = async (req, res) => {
       }
 
       const playlist = existingResult[0];
-      // Super admin can delete any, regular admin can only delete their own
-      if (userRole !== 'super_admin' && adminId && playlist.created_by !== adminId) {
+      const creatorId = playlist.created_by != null ? String(playlist.created_by) : null;
+      if (userRole !== 'super_admin' && adminId && creatorId !== String(adminId)) {
         return res.status(403).json({ error: 'You can only delete playlists you created' });
       }
 
