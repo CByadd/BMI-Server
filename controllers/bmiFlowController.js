@@ -161,7 +161,7 @@ function calculateStreak(bmiRecords) {
  */
 exports.createBMI = async (req, res, io) => {
     try {
-		const { heightCm, weightKg, screenId, appVersion } = req.body || {};
+		const { heightCm, weightKg, screenId, appVersion, fortune: bodyFortune, healthTip: bodyHealthTip } = req.body || {};
 		const flowStartTime = new Date().toISOString();
 		
 		// ========== PAYMENT FLOW LOGGING - FLOW STARTED (SERVER) ==========
@@ -195,11 +195,12 @@ exports.createBMI = async (req, res, io) => {
 		const { bmi, category } = computeBMI(heightCm, weightKg);
 		const bmiId = uuidv4();
 		const timestamp = new Date().toISOString();
-		// Generate fortune cookie message for F2 flow, null for F1 (will be generated after payment)
-        // Use player's flow type from DB, fallback to appVersion from request
+		// Fortune: use client-provided (Android local pick) when present, else generate for F2, else null for F1/F3
         const effectiveFlowType = playerFlowType || appVersion;
-        const fortune = (effectiveFlowType === 'F2' || effectiveFlowType === 'f2') ? await generateFortuneMessage({ bmi, category }) : null;
-        console.log('[BMI] Effective flow type:', effectiveFlowType, 'fortune generated:', !!fortune);
+        const clientFortune = (bodyFortune != null && String(bodyFortune).trim()) ? String(bodyFortune).trim() : null;
+        const fortune = clientFortune ?? ((effectiveFlowType === 'F2' || effectiveFlowType === 'f2') ? await generateFortuneMessage({ bmi, category }) : null);
+        const healthTip = (bodyHealthTip != null && String(bodyHealthTip).trim()) ? String(bodyHealthTip).trim() : null;
+        console.log('[BMI] Effective flow type:', effectiveFlowType, 'fortune:', clientFortune ? 'from client' : !!fortune, 'healthTip:', !!healthTip);
         
 		const payload = {
 			bmiId,
@@ -232,7 +233,8 @@ exports.createBMI = async (req, res, io) => {
                 deviceId: req.body.deviceId || null,
                 appVersion: appVersion || null,
                 location: req.body.location || null,
-                fortune: fortune
+                fortune: fortune,
+                healthTip: healthTip
             }
         });
 
@@ -517,22 +519,23 @@ exports.paymentSuccess = async (req, res, io) => {
         // Normalize appVersion for consistent comparison (case-insensitive)
         const normalizedAppVersion = appVersion ? String(appVersion).toLowerCase() : '';
         
-        // Generate fortune immediately for F1/F3 flow (non-F2 versions)
+        // Generate fortune only when not already set (e.g. Android sent locally-picked fortune at create)
         if (normalizedAppVersion !== 'f2') {
-            console.log('[PAYMENT] F1/F3 Flow: Generating fortune immediately (appVersion:', appVersion, ')');
-            const fortuneMessage = await generateFortuneMessage({
-                bmi: updatedBMI.bmi,
-                category: updatedBMI.category
-            });
-            
-            // Update BMI record with generated fortune
-            await prisma.bMI.update({
-                where: { id: bmiId },
-                data: { fortune: fortuneMessage }
-            });
-            
-            console.log('[PAYMENT] F1/F3 Flow: Fortune generated and stored:', fortuneMessage);
-            console.log('[PAYMENT_FLOW] Fortune Message:', fortuneMessage);
+            const existingFortune = (updatedBMI.fortune != null && String(updatedBMI.fortune).trim()) ? String(updatedBMI.fortune).trim() : null;
+            if (!existingFortune) {
+                console.log('[PAYMENT] F1/F3 Flow: Generating fortune (appVersion:', appVersion, ')');
+                const fortuneMessage = await generateFortuneMessage({
+                    bmi: updatedBMI.bmi,
+                    category: updatedBMI.category
+                });
+                await prisma.bMI.update({
+                    where: { id: bmiId },
+                    data: { fortune: fortuneMessage }
+                });
+                console.log('[PAYMENT] F1/F3 Flow: Fortune generated and stored:', fortuneMessage);
+            } else {
+                console.log('[PAYMENT] F1/F3 Flow: Fortune already set (from client), keeping:', existingFortune.slice(0, 50) + '...');
+            }
         }
         
        // Emit payment success to Android screen (for F1/F3 flows - non-F2 versions)
@@ -908,6 +911,8 @@ exports.getBMI = async (req, res) => {
             category: row.category,
             timestamp: row.timestamp.toISOString(),
             fortune: row.fortune,
+            fortuneMessage: row.fortune,
+            healthTip: row.healthTip ?? null,
             userId: row.userId,
             user: row.user ? {
                 id: row.user.id,

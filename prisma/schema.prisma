@@ -69,6 +69,7 @@ model BMI {
   appVersion    String?  @db.VarChar(10)
   location      String?  @db.VarChar(255)
   fortune       String?  @db.Text
+  healthTip     String?  @db.Text // Locally-picked health tip from Android assets (by BMI category)
   paymentStatus Boolean? @default(false) // Whether payment was completed for this BMI record
   paymentAmount Float? // Actual amount paid by the user in rupees
 
