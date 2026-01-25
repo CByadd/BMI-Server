@@ -9,6 +9,7 @@
     "prisma:generate": "prisma generate ",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate-gender-age": "prisma db execute --file migration_add_gender_age_to_user.sql --schema prisma/schema.prisma",
     "test:sms": "node scripts/test-sms.js"
   },
   "dependencies": {

@@ -403,14 +403,14 @@ exports.paymentSuccess = async (req, res, io) => {
         console.log('[PAYMENT_FLOW] Final payment amount to be saved:', paymentAmount);
         
         // Update BMI record with user, payment status, and payment amount using raw SQL to handle new columns
+        // Use ::uuid casts so PostgreSQL compares uuid = uuid (params are passed as text otherwise)
         try {
-            await prisma.$executeRaw`
-                UPDATE "BMI"
-                SET "userId" = ${userId},
-                    "paymentStatus" = true,
-                    "paymentAmount" = ${paymentAmount}
-                WHERE id = ${bmiId}
-            `;
+            await prisma.$executeRawUnsafe(
+                `UPDATE "BMI" SET "userId" = $1::uuid, "paymentStatus" = true, "paymentAmount" = $2 WHERE id = $3::uuid`,
+                userId,
+                paymentAmount,
+                bmiId
+            );
             console.log('[PAYMENT_FLOW] ✅ BMI record updated successfully with payment amount:', paymentAmount);
         } catch (e) {
             // If columns don't exist, create them first
@@ -431,14 +431,13 @@ exports.paymentSuccess = async (req, res, io) => {
                     `);
                     console.log('[PAYMENT_FLOW] ✅ Created paymentAmount column');
                     
-                    // Now try the update again
-                    await prisma.$executeRaw`
-                        UPDATE "BMI"
-                        SET "userId" = ${userId},
-                            "paymentStatus" = true,
-                            "paymentAmount" = ${paymentAmount}
-                        WHERE id = ${bmiId}
-                    `;
+                    // Now try the update again (::uuid casts avoid "uuid = text" operator error)
+                    await prisma.$executeRawUnsafe(
+                        `UPDATE "BMI" SET "userId" = $1::uuid, "paymentStatus" = true, "paymentAmount" = $2 WHERE id = $3::uuid`,
+                        userId,
+                        paymentAmount,
+                        bmiId
+                    );
                     console.log('[PAYMENT_FLOW] ✅ BMI record updated successfully with payment amount after creating columns:', paymentAmount);
                 } catch (createError) {
                     console.error('[PAYMENT_FLOW] Error creating columns or updating:', createError);
@@ -474,12 +473,10 @@ exports.paymentSuccess = async (req, res, io) => {
         } catch (e) {
             // If Prisma can't find it (columns might not exist in Prisma schema), use raw SQL
             console.log('[PAYMENT_FLOW] Prisma findUnique failed, using raw SQL to verify...');
-            const verifyResult = await prisma.$queryRaw`
-                SELECT id, "userId", "paymentStatus", "paymentAmount"
-                FROM "BMI"
-                WHERE id = ${bmiId}
-                LIMIT 1
-            `;
+            const verifyResult = await prisma.$queryRawUnsafe(
+                `SELECT id, "userId", "paymentStatus", "paymentAmount" FROM "BMI" WHERE id = $1::uuid LIMIT 1`,
+                bmiId
+            );
             if (verifyResult && verifyResult.length > 0) {
                 const record = verifyResult[0];
                 console.log('[PAYMENT_FLOW] ✅ Verified payment amount saved:', {
