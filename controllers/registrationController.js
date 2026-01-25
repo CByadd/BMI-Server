@@ -14,7 +14,7 @@ exports.createRegistration = async (req, res) => {
     const businessInfoObj = typeof businessInfo === 'string' ? JSON.parse(businessInfo) : businessInfo;
     const oauthDataObj = oauthData ? (typeof oauthData === 'string' ? JSON.parse(oauthData) : oauthData) : null;
 
-    // Process uploaded files (simplified - in production upload to Cloudinary)
+    // Process uploaded files (simplified - in production upload to local assets or S3)
     const documents = {};
     if (req.files) {
       for (const key of Object.keys(req.files)) {

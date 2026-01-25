@@ -73,7 +73,7 @@ Or your production server URL.
 2. **File Uploads**: 
    - Campaign creation supports file uploads via `multer`
    - Registration supports document uploads
-   - Files are currently stored with placeholder URLs - in production, upload to Cloudinary or S3
+   - Files are currently stored with placeholder URLs - in production, upload to local assets (ASSET_BASE_URL) or S3
 
 3. **Slot Generation**: 
    - Slots are automatically generated when campaigns are created
@@ -91,7 +91,7 @@ Or your production server URL.
 
 1. **Install Dependencies**: Run `npm install` in the server directory
 2. **Add Authentication**: Implement JWT authentication middleware
-3. **File Upload**: Configure Cloudinary or S3 for actual file storage
+3. **File Upload**: Uses local asset storage at ASSETS_DIR; Nginx serves at ASSET_BASE_URL
 4. **Slot Generation**: Implement full slot generation logic
 5. **Error Handling**: Enhance error handling and validation
 6. **Testing**: Test all endpoints with the admin panel

@@ -294,6 +294,10 @@ function logSocketStatus() {
 logSocketStatus(); // Log once at startup
 setInterval(logSocketStatus, SOCKET_STATUS_INTERVAL_MS);
 
+// Serve static assets from ASSETS_DIR at /assets (for local dev; in production Nginx typically serves https://api.well2day.in/assets from /var/www/assets)
+const ASSETS_DIR = process.env.ASSETS_DIR || '/var/www/assets';
+app.use('/assets', express.static(ASSETS_DIR));
+
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 

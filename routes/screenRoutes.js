@@ -4,7 +4,7 @@ const screenController = require('../controllers/screenController');
 const { authenticateToken, checkScreenAccess } = require('../middleware/authMiddleware');
 const multer = require('multer');
 
-// Configure multer for logo uploads (memory storage for Cloudinary)
+// Multer for logo and flow-drawer uploads (memory storage; controller writes to ASSETS_DIR)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {

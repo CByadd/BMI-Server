@@ -136,11 +136,12 @@ exports.createPlaylist = async (req, res, io) => {
     const playlistSlots = slots && Array.isArray(slots) ? slots : Array(8).fill(null);
 
     try {
-      // Try to insert into database with created_by
-      await prisma.$executeRaw`
-        INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
-        VALUES (${id}, ${name}, ${description || ''}, ${JSON.stringify(tagsArray)}, ${JSON.stringify(playlistSlots)}, ${adminId || null}, NOW(), NOW())
-      `;
+      // Try to insert into database with created_by (cast to uuid for PostgreSQL)
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::uuid, NOW(), NOW())`,
+        id, name, description || '', JSON.stringify(tagsArray), JSON.stringify(playlistSlots), adminId
+      );
     } catch (dbError) {
       // If table doesn't exist, create it
       console.log('[PLAYLIST] Table may not exist, creating...');
@@ -161,10 +162,11 @@ exports.createPlaylist = async (req, res, io) => {
         await prisma.$executeRawUnsafe(`
           CREATE INDEX IF NOT EXISTS idx_playlists_created_by ON playlists(created_by);
         `);
-        await prisma.$executeRaw`
-          INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
-          VALUES (${id}, ${name}, ${description || ''}, ${JSON.stringify(tagsArray)}, ${JSON.stringify(playlistSlots)}, ${adminId || null}, NOW(), NOW())
-        `;
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6::uuid, NOW(), NOW())`,
+          id, name, description || '', JSON.stringify(tagsArray), JSON.stringify(playlistSlots), adminId
+        );
       } catch (createError) {
         console.error('[PLAYLIST] Create table error:', createError);
         // Continue anyway - will work with in-memory for now
@@ -217,19 +219,11 @@ exports.updatePlaylist = async (req, res, io) => {
       const tagsArray = tags ? (typeof tags === 'string' ? tags.split(',').map(t => t.trim()).filter(t => t) : tags) : [];
       const playlistName = name || `Playlist ${id}`;
       
-      await prisma.$executeRawUnsafe(`
-        INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
-        VALUES (
-          '${id.replace(/'/g, "''")}',
-          '${playlistName.replace(/'/g, "''")}',
-          '${(description || '').replace(/'/g, "''")}',
-          '${JSON.stringify(tagsArray).replace(/'/g, "''")}',
-          '${JSON.stringify(slots || []).replace(/'/g, "''")}',
-          '${adminId ? adminId.replace(/'/g, "''") : null}',
-          NOW(),
-          NOW()
-        )
-      `);
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::uuid, NOW(), NOW())`,
+        id, playlistName, description || '', JSON.stringify(tagsArray), JSON.stringify(slots || []), adminId
+      );
       console.log('[PLAYLIST] Created new playlist:', id);
     } else {
       // Playlist exists, update it

@@ -31,7 +31,7 @@ exports.createCampaign = async (req, res) => {
       );
 
       // For now, store file URLs as placeholders
-      // In production, upload to Cloudinary or S3
+      // In production, upload to local assets (ASSET_BASE_URL) or S3
       const fileUrls = matchingFiles.map(file => `https://placeholder.com/${file.originalname}`);
 
       const { startDate, endDate } = billboard.bookingDetails || {};

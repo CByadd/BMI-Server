@@ -27,17 +27,17 @@ model AdscapePlayer {
   appVersionCode      String?  @db.VarChar(20)
   heightCalibration   Float?   @default(0) // Height calibration offset in cm (added/subtracted from sensor reading)
   paymentAmount       Float? // Payment amount in currency (e.g., 9.0 for ₹9)
-  logoUrl             String?  @db.Text // Logo URL stored in Cloudinary
+  logoUrl             String?  @db.Text // Logo URL (self-hosted at ASSET_BASE_URL/assets/images/...)
   playlistId          String?  @db.VarChar(255) // Playlist ID assigned to this screen
   flowDrawerEnabled   Boolean? @default(true) // Enable/disable drawer shown when flow is active
   flowDrawerSlotCount Int?     @default(2) // Number of slots: 2, 3, or 5
   hideScreenId        Boolean? @default(false) // Hide screen ID display (when true, screen ID is hidden)
-  flowDrawerSlots     Json? // Array of image URLs: [url1, url2, ...] stored in Cloudinary
-  flowDrawerImage1Url String?  @db.Text // Flow drawer image URL for slot 1 stored in Cloudinary
-  flowDrawerImage2Url String?  @db.Text // Flow drawer image URL for slot 2 stored in Cloudinary
-  flowDrawerImage3Url String?  @db.Text // Flow drawer image URL for slot 3 stored in Cloudinary
-  flowDrawerImage4Url String?  @db.Text // Flow drawer image URL for slot 4 stored in Cloudinary
-  flowDrawerImage5Url String?  @db.Text // Flow drawer image URL for slot 5 stored in Cloudinary
+  flowDrawerSlots     Json? // Array of image URLs [url1, url2, ...] (self-hosted assets)
+  flowDrawerImage1Url String?  @db.Text // Flow drawer image URL slot 1
+  flowDrawerImage2Url String?  @db.Text // Flow drawer image URL slot 2
+  flowDrawerImage3Url String?  @db.Text // Flow drawer image URL slot 3
+  flowDrawerImage4Url String?  @db.Text // Flow drawer image URL slot 4
+  flowDrawerImage5Url String?  @db.Text // Flow drawer image URL slot 5
   lastSeen            DateTime @default(now())
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())

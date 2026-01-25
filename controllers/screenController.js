@@ -1,14 +1,38 @@
 const { PrismaClient, Prisma } = require('@prisma/client');
 const prisma = new PrismaClient();
-const cloudinary = require('cloudinary').v2;
+const fs = require('fs');
+const path = require('path');
+const { ASSETS_DIR, ASSET_BASE_URL, TYPES, ensureAssetDirs, getTypeDir, safeFilename, assetUrl } = require('../config/assets');
 
-// Configure Cloudinary
-if (!cloudinary.config().cloud_name && process.env.CLOUDINARY_CLOUD_NAME) {
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET
-    });
+function isOwnAssetUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    const base = (process.env.ASSET_BASE_URL || 'https://api.well2day.in/assets').replace(/\/$/, '');
+    return url.startsWith(base + '/');
+}
+
+function deleteAssetFileByUrl(url) {
+    if (!isOwnAssetUrl(url)) return;
+    try {
+        const base = (process.env.ASSET_BASE_URL || 'https://api.well2day.in/assets').replace(/\/$/, '');
+        const rest = url.slice(base.length).replace(/^\//, '').replace(/\//g, path.sep);
+        const fullPath = path.join(ASSETS_DIR, rest);
+        if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+            console.log('[ADSCAPE] Deleted local asset:', fullPath);
+        }
+    } catch (e) {
+        console.error('[ADSCAPE] Error deleting local asset:', e.message);
+    }
+}
+
+function saveBufferToAssets(buffer, originalName, prefix) {
+    ensureAssetDirs();
+    const dir = getTypeDir(TYPES.IMAGES);
+    const ext = path.extname(originalName || '') || '.png';
+    const filename = safeFilename(prefix + ext);
+    const fullPath = path.join(dir, filename);
+    fs.writeFileSync(fullPath, buffer);
+    return assetUrl(TYPES.IMAGES, filename);
 }
 
 /**
@@ -520,47 +544,18 @@ exports.uploadLogo = async (req, res) => {
             return res.status(404).json({ error: 'Player not found' });
         }
 
-        // Delete old logo from Cloudinary if exists
-        if (player.logoUrl) {
-            try {
-                // Extract public_id from Cloudinary URL
-                const urlParts = player.logoUrl.split('/');
-                const filename = urlParts[urlParts.length - 1].split('.')[0];
-                const folder = 'well2day-logos';
-                const publicId = `${folder}/${filename}`;
-                await cloudinary.uploader.destroy(publicId);
-                console.log('[ADSCAPE] Old logo deleted from Cloudinary:', publicId);
-            } catch (deleteError) {
-                console.error('[ADSCAPE] Error deleting old logo:', deleteError);
-                // Continue even if deletion fails
-            }
-        }
+        deleteAssetFileByUrl(player.logoUrl);
 
-        // Upload new logo to Cloudinary
-        const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
-                {
-                    folder: 'well2day-logos',
-                    resource_type: 'image',
-                    use_filename: true,
-                    unique_filename: true,
-                    overwrite: false,
-                },
-                (error, result) => {
-                    if (error) {
-                        reject(error);
-                    } else {
-                        resolve(result);
-                    }
-                }
-            ).end(req.file.buffer);
-        });
+        const logoUrlNew = saveBufferToAssets(
+            req.file.buffer,
+            req.file.originalname,
+            `logo-${String(screenId)}-`
+        );
 
-        // Update player with logo URL
         const updatedPlayer = await prisma.adscapePlayer.update({
             where: { screenId: String(screenId) },
             data: {
-                logoUrl: uploadResult.secure_url,
+                logoUrl: logoUrlNew,
                 updatedAt: new Date()
             }
         });
@@ -569,7 +564,7 @@ exports.uploadLogo = async (req, res) => {
 
         return res.json({
             ok: true,
-            logoUrl: uploadResult.secure_url,
+            logoUrl: logoUrlNew,
             player: {
                 screenId: updatedPlayer.screenId,
                 logoUrl: updatedPlayer.logoUrl
@@ -638,21 +633,7 @@ exports.deleteLogo = async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Player not found' });
         }
 
-        // Delete logo from Cloudinary if exists
-        if (player.logoUrl) {
-            try {
-                // Extract public_id from Cloudinary URL
-                const urlParts = player.logoUrl.split('/');
-                const filename = urlParts[urlParts.length - 1].split('.')[0];
-                const folder = 'well2day-logos';
-                const publicId = `${folder}/${filename}`;
-                await cloudinary.uploader.destroy(publicId);
-                console.log('[ADSCAPE] Logo deleted from Cloudinary:', publicId);
-            } catch (deleteError) {
-                console.error('[ADSCAPE] Error deleting logo from Cloudinary:', deleteError);
-                // Continue even if deletion fails - we'll still remove the URL from database
-            }
-        }
+        deleteAssetFileByUrl(player.logoUrl);
 
         // Update player to remove logoUrl
         const updatedPlayer = await prisma.adscapePlayer.update({
@@ -731,42 +712,14 @@ exports.uploadFlowDrawerImage = async (req, res) => {
             return res.status(400).json({ ok: false, error: `Image number must be between 1 and ${Math.min(slotCount, 5)}` });
         }
 
-        // Delete old image from Cloudinary if exists
-        if (oldImageUrl) {
-            try {
-                const urlParts = oldImageUrl.split('/');
-                const filename = urlParts[urlParts.length - 1].split('.')[0];
-                const folder = 'well2day-flow-drawer';
-                const publicId = `${folder}/${filename}`;
-                await cloudinary.uploader.destroy(publicId);
-                console.log('[ADSCAPE] Old flow drawer image deleted from Cloudinary:', publicId);
-            } catch (deleteError) {
-                console.error('[ADSCAPE] Error deleting old flow drawer image:', deleteError);
-                // Continue even if deletion fails
-            }
-        }
+        deleteAssetFileByUrl(oldImageUrl);
 
-        // Upload new image to Cloudinary
-        const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
-                {
-                    folder: 'well2day-flow-drawer',
-                    resource_type: 'image',
-                    use_filename: true,
-                    unique_filename: true,
-                    overwrite: false,
-                },
-                (error, result) => {
-                    if (error) {
-                        reject(error);
-                    } else {
-                        resolve(result);
-                    }
-                }
-            ).end(req.file.buffer);
-        });
+        const imageUrlNew = saveBufferToAssets(
+            req.file.buffer,
+            req.file.originalname,
+            `flow-${String(screenId)}-${slotIndex + 1}-`
+        );
 
-        // Determine which field to update based on slot index
         const fieldMap = {
             0: 'flowDrawerImage1Url',
             1: 'flowDrawerImage2Url',
@@ -780,14 +733,13 @@ exports.uploadFlowDrawerImage = async (req, res) => {
             return res.status(400).json({ ok: false, error: 'Invalid slot number' });
         }
 
-        // Update player with individual URL field using raw SQL
         try {
             await prisma.$executeRawUnsafe(`
                 UPDATE "AdscapePlayer"
                 SET "${fieldName}" = $1,
                     "updatedAt" = NOW()
                 WHERE "screenId" = $2
-            `, uploadResult.secure_url, String(screenId));
+            `, imageUrlNew, String(screenId));
         } catch (e) {
             console.error('[ADSCAPE] Error updating flow drawer image field:', e);
             throw e;
@@ -818,7 +770,7 @@ exports.uploadFlowDrawerImage = async (req, res) => {
 
         return res.json({
             ok: true,
-            imageUrl: uploadResult.secure_url,
+            imageUrl: imageUrlNew,
             imageNumber: slotIndex + 1,
             slots: updatedSlots,
             slotCount: slotCount
@@ -957,18 +909,7 @@ exports.deleteFlowDrawerImage = async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Flow drawer image not found' });
         }
 
-        // Delete image from Cloudinary if exists
-        try {
-            const urlParts = imageUrl.split('/');
-            const filename = urlParts[urlParts.length - 1].split('.')[0];
-            const folder = 'well2day-flow-drawer';
-            const publicId = `${folder}/${filename}`;
-            await cloudinary.uploader.destroy(publicId);
-            console.log('[ADSCAPE] Flow drawer image deleted from Cloudinary:', publicId);
-        } catch (deleteError) {
-            console.error('[ADSCAPE] Error deleting flow drawer image from Cloudinary:', deleteError);
-            // Continue even if deletion fails
-        }
+        deleteAssetFileByUrl(imageUrl);
 
         // Determine which field to clear based on slot index
         const fieldMap = {
