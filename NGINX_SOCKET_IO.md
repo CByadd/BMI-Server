@@ -65,6 +65,62 @@ location / {
 
 Replace `4000` with your app’s `PORT` if different.
 
+### Option C – api.well2day.in (SSL + map for Connection)
+
+Recommended pattern when using HTTPS and a dedicated Socket.IO location. The `map` sets `Connection: upgrade` only when the client sends `Upgrade`, otherwise `close` (keeps non-WebSocket requests clean).
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.well2day.in;
+
+    ssl_certificate /etc/letsencrypt/live/api.well2day.in/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.well2day.in/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # Socket.IO (WebSocket)
+    location /socket.io/ {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+
+    # REST API
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name api.well2day.in;
+    return 301 https://$host$request_uri;
+}
+```
+
+The `map` must live in the `http` context (e.g. top of the file or inside `http { }`), not inside `server`. Changes vs a minimal setup: `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` in `/socket.io/` (for logging and any app logic that needs them), and `proxy_send_timeout 86400` for long-lived writes.
+
 ## 3. Reload Nginx
 
 After editing the config (e.g. under `/etc/nginx/sites-available/` or `/etc/nginx/conf.d/`):

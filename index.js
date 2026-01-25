@@ -169,8 +169,21 @@ const campaignRoutes = require('./routes/campaignRoutes');
 const slotRoutes = require('./routes/slotRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
 
+// Track last connection failure (so SOCKET_STATUS can report "why" when no one is connected)
+let lastConnectionError = null;
+io.engine.on('connection_error', (err) => {
+    lastConnectionError = {
+        code: err.code,
+        message: err.message,
+        context: err.context,
+        at: new Date().toISOString()
+    };
+    console.log('[SOCKET] ❌ Connection attempt failed:', err.code, err.message, err.context || '');
+});
+
 // Players join rooms by screenId
 io.on('connection', (socket) => {
+    lastConnectionError = null; // clear so next "why NO" is not stale
     console.log('[SOCKET] ✅✅✅ NEW CONNECTION ESTABLISHED');
     console.log('[SOCKET] Socket ID:', socket.id);
     console.log('[SOCKET] Client IP:', socket.handshake.address);
@@ -267,6 +280,14 @@ function logSocketStatus() {
         console.log('[SOCKET_STATUS] Screen rooms: ' + screenRooms.map(r => r.room + '(' + r.size + ')').join(', '));
     } else {
         console.log('[SOCKET_STATUS] Screen rooms: (none)');
+    }
+    if (!established) {
+        if (lastConnectionError) {
+            console.log('[SOCKET_STATUS] Why NO: last attempt failed — code ' + lastConnectionError.code + ' "' + lastConnectionError.message + '" at ' + lastConnectionError.at);
+            console.log('[SOCKET_STATUS] Code hints: 3=proxy/WebSocket headers, 4=allowRequest/CORS, 5=protocol version. See server/NGINX_SOCKET_IO.md');
+        } else {
+            console.log('[SOCKET_STATUS] Why NO: no client has reached this server yet. Check: Nginx proxies /socket.io/ with Upgrade+Connection; client uses https://api.well2day.in; CORS allows origin. See server/NGINX_SOCKET_IO.md');
+        }
     }
 }
 
