@@ -249,6 +249,30 @@ io.on('connection', (socket) => {
     });
 });
 
+// Periodic socket connection status log (interval in seconds, default 30)
+const SOCKET_STATUS_INTERVAL_MS = (parseInt(process.env.SOCKET_STATUS_INTERVAL_SEC, 10) || 30) * 1000;
+
+function logSocketStatus() {
+    const totalSockets = io.sockets.sockets.size;
+    const screenRooms = [];
+    io.sockets.adapter.rooms.forEach((socketsSet, roomName) => {
+        if (String(roomName).startsWith('screen:')) {
+            screenRooms.push({ room: roomName, size: socketsSet.size });
+        }
+    });
+    const established = totalSockets > 0;
+    console.log('[SOCKET_STATUS] ─── ' + new Date().toISOString() + ' ───');
+    console.log('[SOCKET_STATUS] Connections established: ' + (established ? 'YES' : 'NO') + ' | Total sockets: ' + totalSockets);
+    if (screenRooms.length) {
+        console.log('[SOCKET_STATUS] Screen rooms: ' + screenRooms.map(r => r.room + '(' + r.size + ')').join(', '));
+    } else {
+        console.log('[SOCKET_STATUS] Screen rooms: (none)');
+    }
+}
+
+logSocketStatus(); // Log once at startup
+setInterval(logSocketStatus, SOCKET_STATUS_INTERVAL_MS);
+
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
@@ -256,169 +280,6 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 const healthTipsController = require('./controllers/healthTipsController');
 app.get('/api/health-tips/:category', healthTipsController.getHealthTips);
 
-// Note: Adscape registration is now handled by screenRoutes
-// POST /api/adscape/register -> Register Adscape player (moved to routes/screenRoutes.js)
-/* app.post('/api/adscape/register', async (req, res) => {
-    try {
-        const { 
-            screenId, 
-            appVersion, 
-            flowType, 
-            deviceName, 
-            screenWidth, 
-            screenHeight, 
-            ipAddress, 
-            location, 
-            osVersion, 
-            appVersionCode 
-        } = req.body || {};
-        
-        if (!screenId || !appVersion) {
-            return res.status(400).json({ error: 'screenId and appVersion required' });
-        }
-        
-        // Upsert Adscape player registration
-        const player = await prisma.adscapePlayer.upsert({
-            where: { screenId: String(screenId) },
-            update: {
-                appVersion: String(appVersion),
-                // Only update flowType if provided, otherwise keep existing value
-                ...(flowType !== undefined && flowType !== null ? { flowType: String(flowType) } : {}),
-                deviceName: deviceName ? String(deviceName) : null,
-                screenWidth: screenWidth ? Number(screenWidth) : null,
-                screenHeight: screenHeight ? Number(screenHeight) : null,
-                ipAddress: ipAddress ? String(ipAddress) : null,
-                location: location ? String(location) : null,
-                osVersion: osVersion ? String(osVersion) : null,
-                appVersionCode: appVersionCode ? String(appVersionCode) : null,
-                lastSeen: new Date(),
-                isActive: true,
-                updatedAt: new Date()
-            },
-            create: {
-                screenId: String(screenId),
-                appVersion: String(appVersion),
-                flowType: flowType ? String(flowType) : null,
-                deviceName: deviceName ? String(deviceName) : null,
-                screenWidth: screenWidth ? Number(screenWidth) : null,
-                screenHeight: screenHeight ? Number(screenHeight) : null,
-                ipAddress: ipAddress ? String(ipAddress) : null,
-                location: location ? String(location) : null,
-                osVersion: osVersion ? String(osVersion) : null,
-                appVersionCode: appVersionCode ? String(appVersionCode) : null,
-                lastSeen: new Date(),
-                isActive: true
-            }
-        });
-        
-        console.log('[ADSCAPE] Player registered:', { screenId, appVersion, flowType });
-        
-        return res.json({ 
-            ok: true, 
-            player: {
-                id: player.id,
-                screenId: player.screenId,
-                appVersion: player.appVersion,
-                flowType: player.flowType,
-                isActive: player.isActive
-            }
-        });
-    } catch (e) {
-        console.error('[ADSCAPE] Registration error:', e);
-        return res.status(500).json({ error: 'internal_error' });
-    }
-});
-
-// Note: All adscape endpoints are now handled by screenRoutes
-// GET /api/adscape/player/:screenId -> Get player flow type (moved to routes/screenRoutes.js)
-/* app.get('/api/adscape/player/:screenId', async (req, res) => {
-    try {
-        const { screenId } = req.params;
-        
-        const player = await prisma.adscapePlayer.findUnique({
-            where: { screenId: String(screenId) }
-        });
-        
-        if (!player) {
-            return res.status(404).json({ error: 'Player not found' });
-        }
-        
-        return res.json({
-            ok: true,
-            player: {
-                screenId: player.screenId,
-                appVersion: player.appVersion,
-                flowType: player.flowType,
-                isActive: player.isActive
-            }
-        });
-    } catch (e) {
-        console.error('[ADSCAPE] Get player error:', e);
-        return res.status(500).json({ error: 'internal_error' });
-    }
-}); */
-
-// GET /api/adscape/players -> Get all players (moved to routes/screenRoutes.js)
-/* app.get('/api/adscape/players', async (req, res) => {
-    try {
-        console.log('[ADSCAPE] Getting all players');
-        
-        const players = await prisma.adscapePlayer.findMany({
-            orderBy: { lastSeen: 'desc' }
-        });
-        
-        res.json({ 
-            success: true, 
-            players 
-        });
-    } catch (error) {
-        console.error('[ADSCAPE] Get players error:', error);
-        res.status(500).json({ error: 'Failed to get players' });
-    }
-}); */
-
-// PUT /api/adscape/player/:screenId/flow-type -> Update player flow type (moved to routes/screenRoutes.js)
-/* app.put('/api/adscape/player/:screenId/flow-type', async (req, res) => {
-    try {
-        const { screenId } = req.params;
-        const { flowType } = req.body;
-        
-        console.log('[ADSCAPE] Updating flow type for player:', screenId, 'to:', flowType);
-        
-        const player = await prisma.adscapePlayer.update({
-            where: { screenId },
-            data: { flowType }
-        });
-        
-        res.json({ 
-            success: true, 
-            player 
-        });
-    } catch (error) {
-        console.error('[ADSCAPE] Update flow type error:', error);
-        res.status(500).json({ error: 'Failed to update flow type' });
-    }
-}); */
-
-// DELETE /api/adscape/player/:screenId -> Delete player (moved to routes/screenRoutes.js)
-/* app.delete('/api/adscape/player/:screenId', async (req, res) => {
-    try {
-        const { screenId } = req.params;
-        console.log('[ADSCAPE] Deleting player:', screenId);
-        
-        await prisma.adscapePlayer.delete({
-            where: { screenId }
-        });
-        
-        res.json({ 
-            success: true, 
-            message: 'Player deleted successfully' 
-        });
-    } catch (error) {
-        console.error('[ADSCAPE] Delete player error:', error);
-        res.status(500).json({ error: 'Failed to delete player' });
-    }
-}); */
 
 // Mount BMI Flow Routes
 app.use('/api', bmiFlowRoutes(io));
