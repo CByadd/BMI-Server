@@ -26,7 +26,9 @@ const io = new Server(server, {
             'https://bmi-client.onrender.com',
             'https://bmi-admin-pi.vercel.app',
              'http://4.240.88.83',
-             'https://api.well2day.in'
+             'https://api.well2day.in',
+             'https://app.well2day.in',
+             'https://admin.well2day.in'
 
 			
 		],
@@ -55,7 +57,9 @@ const allowedOrigins = [
     'https://bmi-client.onrender.com',
     'https://bmi-admin-pi.vercel.app',
     'http://4.240.88.83',
-    'https://api.well2day.in'
+    'https://api.well2day.in',
+    'https://app.well2day.in',
+    'https://admin.well2day.in',
 ];
 
 // CORS middleware with proper OPTIONS handling
