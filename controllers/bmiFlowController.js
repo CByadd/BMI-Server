@@ -239,7 +239,7 @@ exports.createBMI = async (req, res, io) => {
         });
 
 		// Build web client URL (adjust if you host client elsewhere)
-		const clientBase = process.env.CLIENT_BASE_URL || 'https://bmi-client.onrender.com';
+		const clientBase = process.env.CLIENT_BASE_URL || 'https://app.well2day.in';
 		// Provide API base in URL hash so SPA can call backend even when hosted elsewhere
 		const inferredProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0] || req.protocol;
 		const apiBase = process.env.API_PUBLIC_BASE || `${inferredProto}://${req.get('host')}`;
