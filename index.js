@@ -398,6 +398,7 @@ app.get('/api/assets/stats', async (req, res) => {
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
 	console.log(`Server listening on :${PORT}`);
+	console.log('[SOCKET] Socket.IO at /socket.io/ — if behind Nginx, proxy WebSocket for that path (see server/NGINX_SOCKET_IO.md)');
 });
 
 
