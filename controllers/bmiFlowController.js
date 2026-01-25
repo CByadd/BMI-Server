@@ -360,7 +360,7 @@ exports.paymentSuccess = async (req, res, io) => {
         console.log('[PAYMENT_FLOW] Payment Token:', paymentToken || 'Not provided');
         console.log('[PAYMENT_FLOW] Payment Amount (from request):', paymentAmountFromRequest);
         console.log('[PAYMENT_FLOW] Full request body:', JSON.stringify(req.body, null, 2));
-        console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
+        console.log('[PAYMENT_FLOW] Request IP:', req?.ip ?? req?.connection?.remoteAddress ?? 'N/A');
         console.log('═══════════════════════════════════════════════════════════════');
         
         if (!userId || !bmiId) {
