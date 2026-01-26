@@ -2,6 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
+const { sendBulkSms } = require('../services/routeMobileService');
 
 // In-memory store for BMI data
 const bmiStore = new Map(); // bmiId -> payload
@@ -535,6 +536,73 @@ exports.paymentSuccess = async (req, res, io) => {
                 console.log('[PAYMENT] F1/F3 Flow: Fortune generated and stored:', fortuneMessage);
             } else {
                 console.log('[PAYMENT] F1/F3 Flow: Fortune already set (from client), keeping:', existingFortune.slice(0, 50) + '...');
+            }
+        }
+
+        // Send post-payment SMS if enabled for this screen and within limit
+        // Template placeholders: {{weight}}, {{bmi}}, {{url}}
+        const postPaymentSmsTemplate = process.env.POST_PAYMENT_SMS_TEMPLATE ||
+            'Dear User,\n\nYour weight is {{weight}} kg & your BMI is {{bmi}}. For more details, visit {{url}}.\nThanks for visiting.\n\nTeam Well2Day';
+        const visitUrl = process.env.POST_PAYMENT_VISIT_URL || process.env.APP_URL || 'https://well2day.in';
+        const buildPostPaymentMessage = (template, weightKg, bmi) => {
+            return String(template)
+                .replace(/\{\{weight\}\}/g, weightKg != null ? Number(weightKg) : '')
+                .replace(/\{\{bmi\}\}/g, bmi != null ? Number(bmi) : '')
+                .replace(/\{\{url\}\}/g, visitUrl);
+        };
+        try {
+            await prisma.$executeRawUnsafe(
+                `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsEnabled" BOOLEAN DEFAULT false`
+            );
+            await prisma.$executeRawUnsafe(
+                `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsLimitPerScreen" INTEGER`
+            );
+            await prisma.$executeRawUnsafe(
+                `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
+            );
+            const smsConfigRows = await prisma.$queryRawUnsafe(
+                `SELECT "smsEnabled", "smsLimitPerScreen", "smsSentCount" FROM "AdscapePlayer" WHERE "screenId" = $1 LIMIT 1`,
+                updatedBMI.screenId
+            );
+            const smsConfig = smsConfigRows && smsConfigRows[0] ? smsConfigRows[0] : null;
+            if (smsConfig && smsConfig.smsEnabled && updatedBMI.user && updatedBMI.user.mobile) {
+                const limit = smsConfig.smsLimitPerScreen != null ? Number(smsConfig.smsLimitPerScreen) : null;
+                const sent = (smsConfig.smsSentCount != null ? Number(smsConfig.smsSentCount) : 0) || 0;
+                if (limit == null || sent < limit) {
+                    const smsMessage = buildPostPaymentMessage(
+                        postPaymentSmsTemplate,
+                        updatedBMI.weightKg,
+                        updatedBMI.bmi
+                    );
+                    const sr = await sendBulkSms({
+                        destination: updatedBMI.user.mobile,
+                        message: smsMessage,
+                        type: 0,
+                        dlr: 0
+                    });
+                    if (sr.success) {
+                        await prisma.$executeRawUnsafe(
+                            `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
+                        );
+                        await prisma.$executeRawUnsafe(
+                            `UPDATE "AdscapePlayer" SET "smsSentCount" = COALESCE("smsSentCount", 0) + 1 WHERE "screenId" = $1`,
+                            updatedBMI.screenId
+                        );
+                        console.log('[PAYMENT_FLOW] ✅ Post-payment SMS sent to', updatedBMI.user.mobile);
+                    } else {
+                        console.warn('[PAYMENT_FLOW] Post-payment SMS failed:', sr.error, sr.errorCode);
+                    }
+                } else {
+                    console.log('[PAYMENT_FLOW] SMS skipped: screen limit reached', { sent, limit });
+                }
+            } else if (smsConfig && smsConfig.smsEnabled && (!updatedBMI.user || !updatedBMI.user.mobile)) {
+                console.log('[PAYMENT_FLOW] SMS skipped: no user mobile');
+            }
+        } catch (smsErr) {
+            if ((smsErr.code === '42703' || (smsErr.message && smsErr.message.includes('does not exist')))) {
+                console.log('[PAYMENT_FLOW] SMS columns not present on AdscapePlayer, skipping post-payment SMS');
+            } else {
+                console.warn('[PAYMENT_FLOW] Post-payment SMS error (non-fatal):', smsErr.message);
             }
         }
         

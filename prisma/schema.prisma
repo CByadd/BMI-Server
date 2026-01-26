@@ -32,6 +32,9 @@ model AdscapePlayer {
   flowDrawerEnabled   Boolean? @default(true) // Enable/disable drawer shown when flow is active
   flowDrawerSlotCount Int?     @default(2) // Number of slots: 2, 3, or 5
   hideScreenId        Boolean? @default(false) // Hide screen ID display (when true, screen ID is hidden)
+  smsEnabled          Boolean? @default(false) // Send SMS to user after payment completion
+  smsLimitPerScreen   Int?     // Max SMS allowed for this screen (null = no limit)
+  smsSentCount        Int?     @default(0) // Number of SMS sent for this screen (for limit enforcement)
   flowDrawerSlots     Json? // Array of image URLs [url1, url2, ...] (self-hosted assets)
   flowDrawerImage1Url String?  @db.Text // Flow drawer image URL slot 1
   flowDrawerImage2Url String?  @db.Text // Flow drawer image URL slot 2

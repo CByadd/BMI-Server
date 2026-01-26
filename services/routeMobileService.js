@@ -536,7 +536,89 @@ async function validateOTP(msisdn, otp) {
   }
 }
 
+/**
+ * Send a single bulk SMS via Route Mobile HTTP API
+ * API: http://<server>:8080/bulksms/bulksms?username=...&password=...&type=Y&dlr=Z&destination=...&source=...&message=...&url=... (url only for WAP Push type=4)
+ * @param {Object} opts
+ * @param {string} opts.destination - Mobile number (10 digits or with country code)
+ * @param {string} opts.message - Message text (will be URL UTF-8 encoded)
+ * @param {number} [opts.type=0] - 0=Plain GSM, 1=Flash GSM, 2=Unicode, 4=WAP Push, 5=ISO-8859-1, 6=Unicode Flash, 7=Flash ISO-8859-1
+ * @param {number} [opts.dlr=0] - 0=No delivery report, 1=Delivery report required
+ * @param {string} [opts.source] - Sender ID (defaults to OTP_SOURCE env)
+ * @param {string} [opts.url] - For WAP Push (type=4) only; link to send
+ * @returns {Promise<{success: boolean, messageId?: string, error?: string, errorCode?: string}>}
+ */
+async function sendBulkSms(opts) {
+  const {
+    destination,
+    message,
+    type = 0,
+    dlr = 0,
+    source = SMS_SOURCE,
+    url
+  } = opts || {};
+
+  try {
+    if (!SMS_API_BASE_URL || !SMS_USERNAME || !SMS_PASSWORD || !source) {
+      console.error('[BULK_SMS] Missing SMS API configuration');
+      return { success: false, error: 'SMS service not configured', errorCode: 'CONFIG_ERROR' };
+    }
+    const dest = normalizeMobileNumber(String(destination || ''));
+    if (dest.length !== 10) {
+      return { success: false, error: 'Invalid destination. Must be 10 digits.', errorCode: 'INVALID_MSISDN' };
+    }
+    const destinationWithCountryCode = `91${dest}`;
+    const encodedMessage = encodeURIComponent(message || '');
+    const baseUrl = SMS_API_BASE_URL.replace(/\/$/, '');
+    const apiUrl = `${baseUrl}/bulksms/bulksms`;
+    const queryParams = [
+      `username=${encodeURIComponent(SMS_USERNAME)}`,
+      `password=${encodeURIComponent(SMS_PASSWORD)}`,
+      `type=${Number(type)}`,
+      `dlr=${Number(dlr)}`,
+      `destination=${destinationWithCountryCode}`,
+      `source=${encodeURIComponent(source)}`,
+      `message=${encodedMessage}`
+    ];
+    if (type === 4 && url) {
+      queryParams.push(`url=${encodeURIComponent(url)}`);
+    }
+    if (OTP_ENTITY_ID && OTP_TEMPLATE_ID) {
+      queryParams.push(`entityid=${OTP_ENTITY_ID}`);
+      queryParams.push(`tempid=${OTP_TEMPLATE_ID}`);
+    }
+    const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
+    console.log('[BULK_SMS] Sending:', { destination: dest, type, dlr, messageLength: (message || '').length });
+    const response = await axios.get(fullUrl, {
+      timeout: 30000,
+      headers: { 'Accept': '*/*', 'User-Agent': 'Node.js/BulkSMS' },
+      validateStatus: (s) => s >= 200 && s < 500,
+      maxRedirects: 0
+    });
+    const responseText = (response.data?.toString() || response.data || '').trim();
+    if (responseText.startsWith('1701|')) {
+      const parts = responseText.split('|');
+      const cellNoAndMsgId = (parts[1] || '');
+      const messageId = cellNoAndMsgId.includes(':') ? cellNoAndMsgId.split(':').slice(1).join(':') : (parts[2] || '');
+      console.log('[BULK_SMS] Sent successfully:', { destination: dest, messageId });
+      return { success: true, messageId };
+    }
+    const errorCode = responseText.split('|')[0] || responseText.trim();
+    console.error('[BULK_SMS] API error:', { errorCode, response: responseText });
+    return { success: false, error: `SMS API error: ${errorCode}`, errorCode, rawResponse: responseText };
+  } catch (err) {
+    console.error('[BULK_SMS] sendBulkSms error:', err.message);
+    return {
+      success: false,
+      error: err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 'Request timeout' : 'Failed to send SMS',
+      errorCode: err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'NETWORK_ERROR'
+    };
+  }
+}
+
 module.exports = {
   generateOTP,
-  validateOTP
+  validateOTP,
+  sendBulkSms,
+  normalizeMobileNumber
 };

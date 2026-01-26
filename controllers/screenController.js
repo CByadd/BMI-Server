@@ -180,6 +180,9 @@ exports.getPlayer = async (req, res) => {
         let flowDrawerImage3Url = null;
         let flowDrawerImage4Url = null;
         let flowDrawerImage5Url = null;
+        let smsEnabled = false;
+        let smsLimitPerScreen = null;
+        let smsSentCount = 0;
         try {
             const configResult = await prisma.$queryRaw`
                 SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", "hideScreenId",
@@ -244,6 +247,19 @@ exports.getPlayer = async (req, res) => {
             // Columns might not exist yet, use defaults
             console.log('[ADSCAPE] Config columns might not exist yet, using defaults:', e.message);
         }
+        try {
+            const smsResult = await prisma.$queryRawUnsafe(
+                `SELECT COALESCE("smsEnabled", false) as "smsEnabled", "smsLimitPerScreen", COALESCE("smsSentCount", 0) as "smsSentCount" FROM "AdscapePlayer" WHERE "screenId" = $1 LIMIT 1`,
+                String(screenId)
+            );
+            if (smsResult && smsResult[0]) {
+                smsEnabled = Boolean(smsResult[0].smsEnabled);
+                smsLimitPerScreen = smsResult[0].smsLimitPerScreen != null ? Number(smsResult[0].smsLimitPerScreen) : null;
+                smsSentCount = (smsResult[0].smsSentCount != null ? Number(smsResult[0].smsSentCount) : 0) || 0;
+            }
+        } catch (e) {
+            console.log('[ADSCAPE] SMS config columns may not exist, using defaults:', e.message);
+        }
         
         return res.json({
             ok: true,
@@ -276,7 +292,10 @@ exports.getPlayer = async (req, res) => {
                 flowDrawerImage2Url: flowDrawerImage2Url,
                 flowDrawerImage3Url: flowDrawerImage3Url,
                 flowDrawerImage4Url: flowDrawerImage4Url,
-                flowDrawerImage5Url: flowDrawerImage5Url
+                flowDrawerImage5Url: flowDrawerImage5Url,
+                smsEnabled: smsEnabled,
+                smsLimitPerScreen: smsLimitPerScreen,
+                smsSentCount: smsSentCount
             }
         });
     } catch (e) {
@@ -979,7 +998,7 @@ exports.deleteFlowDrawerImage = async (req, res) => {
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId, smsEnabled, smsLimitPerScreen, resetSmsCount } = req.body || {};
         
         console.log('[ADSCAPE] Update screen config request:', { 
             screenId, 
@@ -1042,6 +1061,20 @@ exports.updateScreenConfig = async (req, res, io) => {
         
         if (hideScreenId !== undefined) {
             updateData.hideScreenId = Boolean(hideScreenId);
+        }
+        if (smsEnabled !== undefined) {
+            updateData.smsEnabled = Boolean(smsEnabled);
+        }
+        if (smsLimitPerScreen !== undefined) {
+            if (smsLimitPerScreen === null || smsLimitPerScreen === '') {
+                updateData.smsLimitPerScreen = null;
+            } else {
+                const n = parseInt(smsLimitPerScreen, 10);
+                if (isNaN(n) || n < 0) {
+                    return res.status(400).json({ error: 'smsLimitPerScreen must be a non-negative integer or empty' });
+                }
+                updateData.smsLimitPerScreen = n;
+            }
         }
         
         if (flowDrawerSlotCount !== undefined) {
@@ -1127,7 +1160,24 @@ exports.updateScreenConfig = async (req, res, io) => {
             }
         }
         
-        if (Object.keys(updateData).length === 0 && playlistId === undefined && flowDrawerSlotCount === undefined) {
+        if (resetSmsCount === true) {
+            try {
+                await prisma.$executeRawUnsafe(
+                    `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
+                );
+                await prisma.$executeRawUnsafe(
+                    `UPDATE "AdscapePlayer" SET "smsSentCount" = 0 WHERE "screenId" = $1`,
+                    String(screenId)
+                );
+                console.log('[ADSCAPE] Reset SMS count for screen:', screenId);
+            } catch (e) {
+                if (e.code !== '42703' && !(e.message && e.message.includes('does not exist'))) {
+                    console.warn('[ADSCAPE] Reset SMS count error:', e.message);
+                }
+            }
+        }
+        
+        if (Object.keys(updateData).length === 0 && playlistId === undefined && flowDrawerSlotCount === undefined && (smsEnabled === undefined && smsLimitPerScreen === undefined) && !(resetSmsCount === true)) {
             return res.status(400).json({ error: 'At least one field required for update' });
         }
         
@@ -1141,15 +1191,19 @@ exports.updateScreenConfig = async (req, res, io) => {
             const hasPaymentAmount = 'paymentAmount' in updateData;
             const hasFlowDrawerEnabled = 'flowDrawerEnabled' in updateData;
             const hasHideScreenId = 'hideScreenId' in updateData;
+            const hasSmsEnabled = 'smsEnabled' in updateData;
+            const hasSmsLimitPerScreen = 'smsLimitPerScreen' in updateData;
             const heightCalibrationValue = updateData.heightCalibration;
             const heightCalibrationEnabledValue = updateData.heightCalibrationEnabled;
             const paymentAmountValue = updateData.paymentAmount;
             const flowDrawerEnabledValue = updateData.flowDrawerEnabled;
             const hideScreenIdValue = updateData.hideScreenId;
+            const smsEnabledValue = updateData.smsEnabled;
+            const smsLimitPerScreenValue = updateData.smsLimitPerScreen;
             
-            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId) {
-                // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, and hideScreenId from updateData for Prisma update
-                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, ...prismaUpdateData } = updateData;
+            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId || hasSmsEnabled || hasSmsLimitPerScreen) {
+                // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen from updateData for Prisma update
+                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, ...prismaUpdateData } = updateData;
                 
                 // Update other fields with Prisma if there are any
                 if (Object.keys(prismaUpdateData).length > 0) {
@@ -1311,6 +1365,34 @@ exports.updateScreenConfig = async (req, res, io) => {
                         } else {
                             throw e;
                         }
+                    }
+                }
+                if (hasSmsEnabled) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "smsEnabled" = ${smsEnabledValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsEnabled" BOOLEAN DEFAULT false`);
+                            await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "smsEnabled" = ${smsEnabledValue} WHERE "screenId" = ${String(screenId)}`;
+                        } else throw e;
+                    }
+                }
+                if (hasSmsLimitPerScreen) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "smsLimitPerScreen" = ${smsLimitPerScreenValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsLimitPerScreen" INTEGER`);
+                            await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "smsLimitPerScreen" = ${smsLimitPerScreenValue} WHERE "screenId" = ${String(screenId)}`;
+                        } else throw e;
                     }
                 }
                 
