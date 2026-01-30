@@ -295,7 +295,10 @@ exports.getPlayer = async (req, res) => {
                 flowDrawerImage5Url: flowDrawerImage5Url,
                 smsEnabled: smsEnabled,
                 smsLimitPerScreen: smsLimitPerScreen,
-                smsSentCount: smsSentCount
+                smsSentCount: smsSentCount,
+                whatsappEnabled: whatsappEnabled,
+                whatsappLimitPerScreen: whatsappLimitPerScreen,
+                whatsappSentCount: whatsappSentCount
             }
         });
     } catch (e) {
@@ -998,7 +1001,7 @@ exports.deleteFlowDrawerImage = async (req, res) => {
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId, smsEnabled, smsLimitPerScreen, resetSmsCount } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId, smsEnabled, smsLimitPerScreen, resetSmsCount, whatsappEnabled, whatsappLimitPerScreen, resetWhatsAppCount } = req.body || {};
         
         console.log('[ADSCAPE] Update screen config request:', { 
             screenId, 
@@ -1074,6 +1077,20 @@ exports.updateScreenConfig = async (req, res, io) => {
                     return res.status(400).json({ error: 'smsLimitPerScreen must be a non-negative integer or empty' });
                 }
                 updateData.smsLimitPerScreen = n;
+            }
+        }
+        if (whatsappEnabled !== undefined) {
+            updateData.whatsappEnabled = Boolean(whatsappEnabled);
+        }
+        if (whatsappLimitPerScreen !== undefined) {
+            if (whatsappLimitPerScreen === null || whatsappLimitPerScreen === '') {
+                updateData.whatsappLimitPerScreen = null;
+            } else {
+                const n = parseInt(whatsappLimitPerScreen, 10);
+                if (isNaN(n) || n < 0) {
+                    return res.status(400).json({ error: 'whatsappLimitPerScreen must be a non-negative integer or empty' });
+                }
+                updateData.whatsappLimitPerScreen = n;
             }
         }
         
@@ -1177,7 +1194,7 @@ exports.updateScreenConfig = async (req, res, io) => {
             }
         }
         
-        if (Object.keys(updateData).length === 0 && playlistId === undefined && flowDrawerSlotCount === undefined && (smsEnabled === undefined && smsLimitPerScreen === undefined) && !(resetSmsCount === true)) {
+        if (Object.keys(updateData).length === 0 && playlistId === undefined && flowDrawerSlotCount === undefined && (smsEnabled === undefined && smsLimitPerScreen === undefined) && (whatsappEnabled === undefined && whatsappLimitPerScreen === undefined) && !(resetSmsCount === true) && !(resetWhatsAppCount === true)) {
             return res.status(400).json({ error: 'At least one field required for update' });
         }
         
@@ -1193,6 +1210,8 @@ exports.updateScreenConfig = async (req, res, io) => {
             const hasHideScreenId = 'hideScreenId' in updateData;
             const hasSmsEnabled = 'smsEnabled' in updateData;
             const hasSmsLimitPerScreen = 'smsLimitPerScreen' in updateData;
+            const hasWhatsAppEnabled = 'whatsappEnabled' in updateData;
+            const hasWhatsAppLimitPerScreen = 'whatsappLimitPerScreen' in updateData;
             const heightCalibrationValue = updateData.heightCalibration;
             const heightCalibrationEnabledValue = updateData.heightCalibrationEnabled;
             const paymentAmountValue = updateData.paymentAmount;
@@ -1200,10 +1219,12 @@ exports.updateScreenConfig = async (req, res, io) => {
             const hideScreenIdValue = updateData.hideScreenId;
             const smsEnabledValue = updateData.smsEnabled;
             const smsLimitPerScreenValue = updateData.smsLimitPerScreen;
+            const whatsappEnabledValue = updateData.whatsappEnabled;
+            const whatsappLimitPerScreenValue = updateData.whatsappLimitPerScreen;
             
-            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId || hasSmsEnabled || hasSmsLimitPerScreen) {
-                // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen from updateData for Prisma update
-                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, ...prismaUpdateData } = updateData;
+            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId || hasSmsEnabled || hasSmsLimitPerScreen || hasWhatsAppEnabled || hasWhatsAppLimitPerScreen) {
+                // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, whatsappEnabled, whatsappLimitPerScreen from updateData for Prisma update
+                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, whatsappEnabled, whatsappLimitPerScreen, ...prismaUpdateData } = updateData;
                 
                 // Update other fields with Prisma if there are any
                 if (Object.keys(prismaUpdateData).length > 0) {
@@ -1393,6 +1414,50 @@ exports.updateScreenConfig = async (req, res, io) => {
                             await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsLimitPerScreen" INTEGER`);
                             await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "smsLimitPerScreen" = ${smsLimitPerScreenValue} WHERE "screenId" = ${String(screenId)}`;
                         } else throw e;
+                    }
+                }
+                if (hasWhatsAppEnabled) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "whatsappEnabled" = ${whatsappEnabledValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappEnabled" BOOLEAN DEFAULT false`);
+                            await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "whatsappEnabled" = ${whatsappEnabledValue} WHERE "screenId" = ${String(screenId)}`;
+                        } else throw e;
+                    }
+                }
+                if (hasWhatsAppLimitPerScreen) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "whatsappLimitPerScreen" = ${whatsappLimitPerScreenValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappLimitPerScreen" INTEGER`);
+                            await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "whatsappLimitPerScreen" = ${whatsappLimitPerScreenValue} WHERE "screenId" = ${String(screenId)}`;
+                        } else throw e;
+                    }
+                }
+                if (resetWhatsAppCount === true) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "whatsappSentCount" = 0
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappSentCount" INTEGER DEFAULT 0`);
+                            await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "whatsappSentCount" = 0 WHERE "screenId" = ${String(screenId)}`;
+                        } else {
+                            console.warn('[ADSCAPE] Reset WhatsApp count error:', e.message);
+                        }
                     }
                 }
                 

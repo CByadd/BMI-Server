@@ -3,6 +3,7 @@ const prisma = new PrismaClient();
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const { sendBulkSms } = require('../services/routeMobileService');
+const { sendWellTemplate } = require('../services/convoboxWhatsAppService');
 
 // In-memory store for BMI data
 const bmiStore = new Map(); // bmiId -> payload
@@ -539,6 +540,15 @@ exports.paymentSuccess = async (req, res, io) => {
             }
         }
 
+        // Re-fetch BMI so we have latest fortune and healthTip for WhatsApp template
+        updatedBMI = await prisma.bMI.findUnique({
+            where: { id: bmiId },
+            include: { user: true, screen: true }
+        });
+        if (!updatedBMI) {
+            return res.status(404).json({ error: 'BMI record not found after update' });
+        }
+
         // Send post-payment SMS if enabled for this screen and within limit
         // Template placeholders: {{weight}}, {{bmi}}, {{url}}
         const postPaymentSmsTemplate = process.env.POST_PAYMENT_SMS_TEMPLATE ||
@@ -581,17 +591,18 @@ exports.paymentSuccess = async (req, res, io) => {
                         dlr: 0
                     });
                     if (sr.success) {
-                        await prisma.$executeRawUnsafe(
-                            `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
-                        );
-                        await prisma.$executeRawUnsafe(
-                            `UPDATE "AdscapePlayer" SET "smsSentCount" = COALESCE("smsSentCount", 0) + 1 WHERE "screenId" = $1`,
-                            updatedBMI.screenId
-                        );
                         console.log('[PAYMENT_FLOW] ✅ Post-payment SMS sent to', updatedBMI.user.mobile);
                     } else {
                         console.warn('[PAYMENT_FLOW] Post-payment SMS failed:', sr.error, sr.errorCode);
                     }
+                    // Increment SMS count
+                    await prisma.$executeRawUnsafe(
+                        `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
+                    );
+                    await prisma.$executeRawUnsafe(
+                        `UPDATE "AdscapePlayer" SET "smsSentCount" = COALESCE("smsSentCount", 0) + 1 WHERE "screenId" = $1`,
+                        updatedBMI.screenId
+                    );
                 } else {
                     console.log('[PAYMENT_FLOW] SMS skipped: screen limit reached', { sent, limit });
                 }
@@ -603,6 +614,62 @@ exports.paymentSuccess = async (req, res, io) => {
                 console.log('[PAYMENT_FLOW] SMS columns not present on AdscapePlayer, skipping post-payment SMS');
             } else {
                 console.warn('[PAYMENT_FLOW] Post-payment SMS error (non-fatal):', smsErr.message);
+            }
+        }
+        
+        // Send WhatsApp if enabled and within limit
+        try {
+            await prisma.$executeRawUnsafe(
+                `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappEnabled" BOOLEAN DEFAULT false`
+            );
+            await prisma.$executeRawUnsafe(
+                `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappLimitPerScreen" INTEGER`
+            );
+            await prisma.$executeRawUnsafe(
+                `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappSentCount" INTEGER DEFAULT 0`
+            );
+            const waConfigRows = await prisma.$queryRawUnsafe(
+                `SELECT "whatsappEnabled", "whatsappLimitPerScreen", "whatsappSentCount" FROM "AdscapePlayer" WHERE "screenId" = $1 LIMIT 1`,
+                updatedBMI.screenId
+            );
+            const waConfig = waConfigRows && waConfigRows[0] ? waConfigRows[0] : null;
+            if (waConfig && waConfig.whatsappEnabled && updatedBMI.user && updatedBMI.user.mobile) {
+                const waLimit = waConfig.whatsappLimitPerScreen != null ? Number(waConfig.whatsappLimitPerScreen) : null;
+                const waSent = (waConfig.whatsappSentCount != null ? Number(waConfig.whatsappSentCount) : 0) || 0;
+                if (waLimit == null || waSent < waLimit) {
+                    const waResult = await sendWellTemplate({
+                        receiver: updatedBMI.user.mobile,
+                        name: updatedBMI.user.name || 'User',
+                        weightKg: updatedBMI.weightKg != null ? updatedBMI.weightKg : '',
+                        heightCm: updatedBMI.heightCm != null ? updatedBMI.heightCm : '',
+                        bmi: updatedBMI.bmi != null ? updatedBMI.bmi : '',
+                        fortune: (updatedBMI.fortune != null && String(updatedBMI.fortune).trim()) ? String(updatedBMI.fortune).trim() : '',
+                        healthTip: (updatedBMI.healthTip != null && String(updatedBMI.healthTip).trim()) ? String(updatedBMI.healthTip).trim() : ''
+                    });
+                    if (waResult.success) {
+                        console.log('[PAYMENT_FLOW] ✅ Post-payment WhatsApp (well) sent to', updatedBMI.user.mobile);
+                    } else {
+                        console.warn('[PAYMENT_FLOW] Post-payment WhatsApp failed:', waResult.error, waResult.errorCode);
+                    }
+                    // Increment WhatsApp count
+                    await prisma.$executeRawUnsafe(
+                        `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappSentCount" INTEGER DEFAULT 0`
+                    );
+                    await prisma.$executeRawUnsafe(
+                        `UPDATE "AdscapePlayer" SET "whatsappSentCount" = COALESCE("whatsappSentCount", 0) + 1 WHERE "screenId" = $1`,
+                        updatedBMI.screenId
+                    );
+                } else {
+                    console.log('[PAYMENT_FLOW] WhatsApp skipped: screen limit reached', { sent: waSent, limit: waLimit });
+                }
+            } else if (waConfig && waConfig.whatsappEnabled && (!updatedBMI.user || !updatedBMI.user.mobile)) {
+                console.log('[PAYMENT_FLOW] WhatsApp skipped: no user mobile');
+            }
+        } catch (waErr) {
+            if ((waErr.code === '42703' || (waErr.message && waErr.message.includes('does not exist')))) {
+                console.log('[PAYMENT_FLOW] WhatsApp columns not present on AdscapePlayer, skipping post-payment WhatsApp');
+            } else {
+                console.warn('[PAYMENT_FLOW] Post-payment WhatsApp error (non-fatal):', waErr.message);
             }
         }
         

@@ -35,6 +35,9 @@ model AdscapePlayer {
   smsEnabled          Boolean? @default(false) // Send SMS to user after payment completion
   smsLimitPerScreen   Int?     // Max SMS allowed for this screen (null = no limit)
   smsSentCount        Int?     @default(0) // Number of SMS sent for this screen (for limit enforcement)
+  whatsappEnabled     Boolean? @default(false) // Send WhatsApp to user after payment completion
+  whatsappLimitPerScreen Int?  // Max WhatsApp messages allowed for this screen (null = no limit)
+  whatsappSentCount   Int?     @default(0) // Number of WhatsApp messages sent for this screen (for limit enforcement)
   flowDrawerSlots     Json? // Array of image URLs [url1, url2, ...] (self-hosted assets)
   flowDrawerImage1Url String?  @db.Text // Flow drawer image URL slot 1
   flowDrawerImage2Url String?  @db.Text // Flow drawer image URL slot 2
@@ -88,6 +91,7 @@ model AdminUser {
   name               String                  @db.VarChar(255)
   role               String                  @db.VarChar(20) // 'super_admin' or 'admin'
   totalMessageLimit  Int?                    // Total message (SMS) limit for this admin; set by super admin (admin role only)
+  totalWhatsAppLimit Int?                    // Total WhatsApp message limit for this admin; set by super admin (admin role only)
   isActive           Boolean                 @default(true)
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
@@ -101,9 +105,10 @@ model AdminScreenAssignment {
   id           String    @id @default(uuid()) @db.Uuid
   adminId      String    @db.Uuid
   admin        AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  screenId     String    @db.VarChar(64)
-  messageLimit Int?      // Message (SMS) limit allocated to this screen by the admin (sum across screens <= admin totalMessageLimit)
-  createdAt    DateTime  @default(now())
+  screenId        String    @db.VarChar(64)
+  messageLimit    Int?      // Message (SMS) limit allocated to this screen by the admin (sum across screens <= admin totalMessageLimit)
+  whatsappLimit   Int?      // WhatsApp message limit allocated to this screen by the admin (sum across screens <= admin totalWhatsAppLimit)
+  createdAt       DateTime  @default(now())
 
   @@unique([adminId, screenId])
   @@index([adminId])
