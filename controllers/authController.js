@@ -199,7 +199,7 @@ exports.registerAdmin = async (req, res) => {
     if (effectiveRole === 'admin' && totalMessageLimit !== undefined) {
       const exist = await getMessageLimitColumnsExist();
       if (exist) {
-        await prisma.$executeRaw`UPDATE "AdminUser" SET "totalMessageLimit" = ${parseInt(totalMessageLimit, 10)} WHERE id = ${newAdmin.id}`;
+        await prisma.$executeRaw`UPDATE "AdminUser" SET "totalMessageLimit" = ${parseInt(totalMessageLimit, 10)} WHERE id = CAST(${newAdmin.id} AS uuid)`;
       }
     }
 
@@ -227,7 +227,7 @@ exports.registerAdmin = async (req, res) => {
         for (const screenId of screenIds) {
           const lim = limitsMap[String(screenId)];
           if (lim !== undefined) {
-            await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "messageLimit" = ${lim} WHERE "adminId" = ${newAdmin.id} AND "screenId" = ${String(screenId)}`;
+            await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "messageLimit" = ${lim} WHERE "adminId" = CAST(${newAdmin.id} AS uuid) AND "screenId" = ${String(screenId)}`;
           }
         }
       }
@@ -319,7 +319,7 @@ exports.updateAdmin = async (req, res) => {
       const exist = await getMessageLimitColumnsExist();
       if (exist) {
         const val = totalMessageLimit === null || totalMessageLimit === '' ? null : parseInt(totalMessageLimit, 10);
-        await prisma.$executeRaw`UPDATE "AdminUser" SET "totalMessageLimit" = ${val} WHERE id = ${id}`;
+        await prisma.$executeRaw`UPDATE "AdminUser" SET "totalMessageLimit" = ${val} WHERE id = CAST(${id} AS uuid)`;
       }
     }
 
@@ -350,7 +350,7 @@ exports.updateAdmin = async (req, res) => {
         if (exist) {
           for (const screenId of screenIds) {
             const lim = limitsMap[String(screenId)] ?? null;
-            await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "messageLimit" = ${lim} WHERE "adminId" = ${id} AND "screenId" = ${String(screenId)}`;
+            await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "messageLimit" = ${lim} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${String(screenId)}`;
           }
         }
       }
@@ -479,7 +479,7 @@ exports.getAdminScreens = async (req, res) => {
     const exist = await getMessageLimitColumnsExist();
     if (exist) {
       try {
-        const rows = await prisma.$queryRaw`SELECT "screenId", "messageLimit" FROM "AdminScreenAssignment" WHERE "adminId" = ${id}`;
+        const rows = await prisma.$queryRaw`SELECT "screenId", "messageLimit" FROM "AdminScreenAssignment" WHERE "adminId" = CAST(${id} AS uuid)`;
         for (let i = 0; i < rows.length; i++) {
           const r = rows[i];
           const s = screens.find((x) => x.screenId === r.screenId);
@@ -530,7 +530,7 @@ exports.setAdminScreenLimits = async (req, res) => {
     const exist = await getMessageLimitColumnsExist();
     if (exist) {
       try {
-        const [row] = await prisma.$queryRaw`SELECT "totalMessageLimit" FROM "AdminUser" WHERE id = ${id}`;
+        const [row] = await prisma.$queryRaw`SELECT "totalMessageLimit" FROM "AdminUser" WHERE id = CAST(${id} AS uuid)`;
         if (row && row.totalMessageLimit != null) totalLimit = Number(row.totalMessageLimit);
       } catch (_) {}
     }
@@ -559,7 +559,7 @@ exports.setAdminScreenLimits = async (req, res) => {
     const columnsExist = await getMessageLimitColumnsExist();
     if (columnsExist) {
       for (const { screenId, messageLimit } of updates) {
-        await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "messageLimit" = ${messageLimit} WHERE "adminId" = ${id} AND "screenId" = ${screenId}`;
+        await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "messageLimit" = ${messageLimit} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${screenId}`;
       }
     }
 
