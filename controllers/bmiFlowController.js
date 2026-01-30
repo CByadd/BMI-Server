@@ -575,7 +575,20 @@ exports.paymentSuccess = async (req, res, io) => {
                 updatedBMI.screenId
             );
             const smsConfig = smsConfigRows && smsConfigRows[0] ? smsConfigRows[0] : null;
-            if (smsConfig && smsConfig.smsEnabled && updatedBMI.user && updatedBMI.user.mobile) {
+            // SMS: enabled when (1) screen is not assigned to any admin — super admin can enable for those screens,
+            // or (2) at least one assigned admin has totalMessageLimit > 0 (super admin has set a limit for that admin).
+            let smsAllowedByAdmin = true;
+            try {
+                const adminLimitRows = await prisma.$queryRawUnsafe(
+                    `SELECT au."totalMessageLimit" FROM "AdminScreenAssignment" asa JOIN "AdminUser" au ON au.id = asa."adminId" WHERE asa."screenId" = $1`,
+                    updatedBMI.screenId
+                );
+                if (Array.isArray(adminLimitRows) && adminLimitRows.length > 0) {
+                    smsAllowedByAdmin = adminLimitRows.some((r) => r.totalMessageLimit != null && Number(r.totalMessageLimit) > 0);
+                }
+                // else: no assigned admins → keep true so super admin can enable SMS for this screen
+            } catch (_) {}
+            if (smsConfig && smsConfig.smsEnabled && updatedBMI.user && updatedBMI.user.mobile && smsAllowedByAdmin) {
                 const limit = smsConfig.smsLimitPerScreen != null ? Number(smsConfig.smsLimitPerScreen) : null;
                 const sent = (smsConfig.smsSentCount != null ? Number(smsConfig.smsSentCount) : 0) || 0;
                 if (limit == null || sent < limit) {
@@ -633,7 +646,20 @@ exports.paymentSuccess = async (req, res, io) => {
                 updatedBMI.screenId
             );
             const waConfig = waConfigRows && waConfigRows[0] ? waConfigRows[0] : null;
-            if (waConfig && waConfig.whatsappEnabled && updatedBMI.user && updatedBMI.user.mobile) {
+            // WhatsApp: enabled when (1) screen is not assigned to any admin — super admin can enable for those screens,
+            // or (2) at least one assigned admin has totalWhatsAppLimit > 0 (super admin has set a limit for that admin).
+            let whatsappAllowedByAdmin = true;
+            try {
+                const adminWaRows = await prisma.$queryRawUnsafe(
+                    `SELECT au."totalWhatsAppLimit" FROM "AdminScreenAssignment" asa JOIN "AdminUser" au ON au.id = asa."adminId" WHERE asa."screenId" = $1`,
+                    updatedBMI.screenId
+                );
+                if (Array.isArray(adminWaRows) && adminWaRows.length > 0) {
+                    whatsappAllowedByAdmin = adminWaRows.some((r) => r.totalWhatsAppLimit != null && Number(r.totalWhatsAppLimit) > 0);
+                }
+                // else: no assigned admins → keep true so super admin can enable WhatsApp for this screen
+            } catch (_) {}
+            if (waConfig && waConfig.whatsappEnabled && updatedBMI.user && updatedBMI.user.mobile && whatsappAllowedByAdmin) {
                 const waLimit = waConfig.whatsappLimitPerScreen != null ? Number(waConfig.whatsappLimitPerScreen) : null;
                 const waSent = (waConfig.whatsappSentCount != null ? Number(waConfig.whatsappSentCount) : 0) || 0;
                 if (waLimit == null || waSent < waLimit) {
