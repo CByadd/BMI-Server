@@ -183,6 +183,9 @@ exports.getPlayer = async (req, res) => {
         let smsEnabled = false;
         let smsLimitPerScreen = null;
         let smsSentCount = 0;
+        let whatsappEnabled = false;
+        let whatsappLimitPerScreen = null;
+        let whatsappSentCount = 0;
         try {
             const configResult = await prisma.$queryRaw`
                 SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", "hideScreenId",
@@ -259,6 +262,19 @@ exports.getPlayer = async (req, res) => {
             }
         } catch (e) {
             console.log('[ADSCAPE] SMS config columns may not exist, using defaults:', e.message);
+        }
+        try {
+            const waResult = await prisma.$queryRawUnsafe(
+                `SELECT COALESCE("whatsappEnabled", false) as "whatsappEnabled", "whatsappLimitPerScreen", COALESCE("whatsappSentCount", 0) as "whatsappSentCount" FROM "AdscapePlayer" WHERE "screenId" = $1 LIMIT 1`,
+                String(screenId)
+            );
+            if (waResult && waResult[0]) {
+                whatsappEnabled = Boolean(waResult[0].whatsappEnabled);
+                whatsappLimitPerScreen = waResult[0].whatsappLimitPerScreen != null ? Number(waResult[0].whatsappLimitPerScreen) : null;
+                whatsappSentCount = (waResult[0].whatsappSentCount != null ? Number(waResult[0].whatsappSentCount) : 0) || 0;
+            }
+        } catch (e) {
+            console.log('[ADSCAPE] WhatsApp config columns may not exist, using defaults:', e.message);
         }
         
         return res.json({
