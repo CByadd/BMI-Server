@@ -13,7 +13,8 @@ router.get('/auth/admins', authenticateToken, requireSuperAdmin, authController.
 router.put('/auth/admin/:id', authenticateToken, requireSuperAdmin, authController.updateAdmin);
 router.delete('/auth/admin/:id', authenticateToken, requireSuperAdmin, authController.deleteAdmin);
 router.post('/auth/admin/:id/assign-screens', authenticateToken, requireSuperAdmin, authController.assignScreens);
-router.get('/auth/admin/:id/screens', authenticateToken, requireSuperAdmin, authController.getAdminScreens);
+router.get('/auth/admin/:id/screens', authenticateToken, authController.getAdminScreens);
+router.put('/auth/admin/:id/screen-limits', authenticateToken, authController.setAdminScreenLimits);
 
 module.exports = router;
 

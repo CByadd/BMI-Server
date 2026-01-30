@@ -82,26 +82,28 @@ model BMI {
 }
 
 model AdminUser {
-  id              String                  @id @default(uuid()) @db.Uuid
-  email           String                  @unique @db.VarChar(255)
-  password        String                  @db.VarChar(255) // Hashed password
-  name            String                  @db.VarChar(255)
-  role            String                  @db.VarChar(20) // 'super_admin' or 'admin'
-  isActive        Boolean                 @default(true)
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
-  assignedScreens AdminScreenAssignment[]
+  id                 String                  @id @default(uuid()) @db.Uuid
+  email              String                  @unique @db.VarChar(255)
+  password           String                  @db.VarChar(255) // Hashed password
+  name               String                  @db.VarChar(255)
+  role               String                  @db.VarChar(20) // 'super_admin' or 'admin'
+  totalMessageLimit  Int?                    // Total message (SMS) limit for this admin; set by super admin (admin role only)
+  isActive           Boolean                 @default(true)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  assignedScreens    AdminScreenAssignment[]
 
   @@index([email])
   @@index([role])
 }
 
 model AdminScreenAssignment {
-  id        String    @id @default(uuid()) @db.Uuid
-  adminId   String    @db.Uuid
-  admin     AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
-  screenId  String    @db.VarChar(64)
-  createdAt DateTime  @default(now())
+  id           String    @id @default(uuid()) @db.Uuid
+  adminId      String    @db.Uuid
+  admin        AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  screenId     String    @db.VarChar(64)
+  messageLimit Int?      // Message (SMS) limit allocated to this screen by the admin (sum across screens <= admin totalMessageLimit)
+  createdAt    DateTime  @default(now())
 
   @@unique([adminId, screenId])
   @@index([adminId])

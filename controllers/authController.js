@@ -40,6 +40,7 @@ exports.login = async (req, res) => {
         assignedScreens: {
           select: {
             screenId: true,
+            messageLimit: true,
           },
         },
       },
@@ -65,6 +66,8 @@ exports.login = async (req, res) => {
     // Return admin data without password
     const adminData = excludePassword(admin);
     adminData.assignedScreenIds = admin.assignedScreens.map((a) => a.screenId);
+    adminData.totalMessageLimit = admin.totalMessageLimit ?? null;
+    adminData.screenLimits = admin.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
 
     res.json({
       token,
@@ -87,6 +90,7 @@ exports.getCurrentUser = async (req, res) => {
         assignedScreens: {
           select: {
             screenId: true,
+            messageLimit: true,
           },
         },
       },
@@ -98,6 +102,8 @@ exports.getCurrentUser = async (req, res) => {
 
     const adminData = excludePassword(admin);
     adminData.assignedScreenIds = admin.assignedScreens.map((a) => a.screenId);
+    adminData.totalMessageLimit = admin.totalMessageLimit ?? null;
+    adminData.screenLimits = admin.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
 
     res.json({ user: adminData });
   } catch (error) {
@@ -109,7 +115,7 @@ exports.getCurrentUser = async (req, res) => {
 // Register new admin (Super Admin only)
 exports.registerAdmin = async (req, res) => {
   try {
-    const { email, password, name, role, screenIds } = req.body;
+    const { email, password, name, role, screenIds, totalMessageLimit } = req.body;
 
     if (!email || !password || !name) {
       return res.status(400).json({ error: 'Email, password, and name are required' });
@@ -117,6 +123,14 @@ exports.registerAdmin = async (req, res) => {
 
     if (role && !['admin', 'super_admin'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role. Must be "admin" or "super_admin"' });
+    }
+
+    const effectiveRole = role || 'admin';
+    if (effectiveRole === 'admin' && totalMessageLimit !== undefined) {
+      const n = parseInt(totalMessageLimit, 10);
+      if (isNaN(n) || n < 0) {
+        return res.status(400).json({ error: 'totalMessageLimit must be a non-negative integer' });
+      }
     }
 
     // Check if email already exists
@@ -131,15 +145,20 @@ exports.registerAdmin = async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const createData = {
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      name,
+      role: effectiveRole,
+      isActive: true,
+    };
+    if (effectiveRole === 'admin' && totalMessageLimit !== undefined) {
+      createData.totalMessageLimit = parseInt(totalMessageLimit, 10);
+    }
+
     // Create admin
     const newAdmin = await prisma.adminUser.create({
-      data: {
-        email: email.toLowerCase(),
-        password: hashedPassword,
-        name,
-        role: role || 'admin',
-        isActive: true,
-      },
+      data: createData,
     });
 
     // Assign screens if provided
@@ -153,13 +172,14 @@ exports.registerAdmin = async (req, res) => {
       });
     }
 
-    // Fetch admin with assigned screens
+    // Fetch admin with assigned screens and totalMessageLimit
     const adminWithScreens = await prisma.adminUser.findUnique({
       where: { id: newAdmin.id },
       include: {
         assignedScreens: {
           select: {
             screenId: true,
+            messageLimit: true,
           },
         },
       },
@@ -167,6 +187,7 @@ exports.registerAdmin = async (req, res) => {
 
     const adminData = excludePassword(adminWithScreens);
     adminData.assignedScreenIds = adminWithScreens.assignedScreens.map((a) => a.screenId);
+    adminData.screenLimits = adminWithScreens.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
 
     res.status(201).json({ user: adminData });
   } catch (error) {
@@ -183,6 +204,7 @@ exports.getAllAdmins = async (req, res) => {
         assignedScreens: {
           select: {
             screenId: true,
+            messageLimit: true,
           },
         },
       },
@@ -194,6 +216,8 @@ exports.getAllAdmins = async (req, res) => {
     const adminsData = admins.map((admin) => {
       const adminData = excludePassword(admin);
       adminData.assignedScreenIds = admin.assignedScreens.map((a) => a.screenId);
+      adminData.totalMessageLimit = admin.totalMessageLimit ?? null;
+      adminData.screenLimits = admin.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
       return adminData;
     });
 
@@ -208,7 +232,7 @@ exports.getAllAdmins = async (req, res) => {
 exports.updateAdmin = async (req, res) => {
   try {
     const { id } = req.params;
-    const { email, password, name, role, isActive, screenIds } = req.body;
+    const { email, password, name, role, isActive, screenIds, screenLimits, totalMessageLimit } = req.body;
 
     const updateData = {};
 
@@ -219,6 +243,17 @@ exports.updateAdmin = async (req, res) => {
     if (password) {
       updateData.password = await bcrypt.hash(password, 10);
     }
+    if (totalMessageLimit !== undefined) {
+      if (totalMessageLimit === null || totalMessageLimit === '') {
+        updateData.totalMessageLimit = null;
+      } else {
+        const n = parseInt(totalMessageLimit, 10);
+        if (isNaN(n) || n < 0) {
+          return res.status(400).json({ error: 'totalMessageLimit must be a non-negative integer or empty' });
+        }
+        updateData.totalMessageLimit = n;
+      }
+    }
 
     // Update admin
     const updatedAdmin = await prisma.adminUser.update({
@@ -228,6 +263,7 @@ exports.updateAdmin = async (req, res) => {
         assignedScreens: {
           select: {
             screenId: true,
+            messageLimit: true,
           },
         },
       },
@@ -235,6 +271,15 @@ exports.updateAdmin = async (req, res) => {
 
     // Update screen assignments if provided
     if (screenIds !== undefined) {
+      const parseLimit = (v) => {
+        if (v == null || v === '') return null;
+        const n = parseInt(v, 10);
+        return !isNaN(n) && n >= 0 ? n : null;
+      };
+      const limitsMap = Array.isArray(screenLimits)
+        ? Object.fromEntries(screenLimits.map((s) => [String(s.screenId), parseLimit(s.messageLimit)]))
+        : {};
+
       // Delete existing assignments
       await prisma.adminScreenAssignment.deleteMany({
         where: { adminId: id },
@@ -246,6 +291,7 @@ exports.updateAdmin = async (req, res) => {
           data: screenIds.map((screenId) => ({
             adminId: id,
             screenId: String(screenId),
+            messageLimit: limitsMap[String(screenId)] ?? null,
           })),
           skipDuplicates: true,
         });
@@ -258,6 +304,7 @@ exports.updateAdmin = async (req, res) => {
           assignedScreens: {
             select: {
               screenId: true,
+              messageLimit: true,
             },
           },
         },
@@ -265,11 +312,15 @@ exports.updateAdmin = async (req, res) => {
 
       const adminData = excludePassword(adminWithScreens);
       adminData.assignedScreenIds = adminWithScreens.assignedScreens.map((a) => a.screenId);
+      adminData.totalMessageLimit = adminWithScreens.totalMessageLimit ?? null;
+      adminData.screenLimits = adminWithScreens.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
       return res.json({ user: adminData });
     }
 
     const adminData = excludePassword(updatedAdmin);
     adminData.assignedScreenIds = updatedAdmin.assignedScreens.map((a) => a.screenId);
+    adminData.totalMessageLimit = updatedAdmin.totalMessageLimit ?? null;
+    adminData.screenLimits = updatedAdmin.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
 
     res.json({ user: adminData });
   } catch (error) {
@@ -309,11 +360,20 @@ exports.deleteAdmin = async (req, res) => {
 exports.assignScreens = async (req, res) => {
   try {
     const { id } = req.params;
-    const { screenIds } = req.body;
+    const { screenIds, screenLimits } = req.body;
 
     if (!Array.isArray(screenIds)) {
       return res.status(400).json({ error: 'screenIds must be an array' });
     }
+
+    const parseLimit = (v) => {
+      if (v == null || v === '') return null;
+      const n = parseInt(v, 10);
+      return !isNaN(n) && n >= 0 ? n : null;
+    };
+    const limitsMap = Array.isArray(screenLimits)
+      ? Object.fromEntries(screenLimits.map((s) => [String(s.screenId), parseLimit(s.messageLimit)]))
+      : {};
 
     // Delete existing assignments
     await prisma.adminScreenAssignment.deleteMany({
@@ -326,6 +386,7 @@ exports.assignScreens = async (req, res) => {
         data: screenIds.map((screenId) => ({
           adminId: id,
           screenId: String(screenId),
+          messageLimit: limitsMap[String(screenId)] ?? null,
         })),
         skipDuplicates: true,
       });
@@ -338,6 +399,7 @@ exports.assignScreens = async (req, res) => {
         assignedScreens: {
           select: {
             screenId: true,
+            messageLimit: true,
           },
         },
       },
@@ -345,6 +407,8 @@ exports.assignScreens = async (req, res) => {
 
     const adminData = excludePassword(adminWithScreens);
     adminData.assignedScreenIds = adminWithScreens.assignedScreens.map((a) => a.screenId);
+    adminData.totalMessageLimit = adminWithScreens.totalMessageLimit ?? null;
+    adminData.screenLimits = adminWithScreens.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
 
     res.json({ user: adminData });
   } catch (error) {
@@ -353,22 +417,110 @@ exports.assignScreens = async (req, res) => {
   }
 };
 
-// Get admin screens (Super Admin only)
+// Get admin screens (Super Admin for any admin, or admin for self)
 exports.getAdminScreens = async (req, res) => {
   try {
     const { id } = req.params;
+    if (req.user.role !== 'super_admin' && req.user.id !== id) {
+      return res.status(403).json({ error: 'You can only view your own screen assignments' });
+    }
 
     const assignments = await prisma.adminScreenAssignment.findMany({
       where: { adminId: id },
       select: {
         screenId: true,
+        messageLimit: true,
       },
     });
 
-    res.json({ screenIds: assignments.map((a) => a.screenId) });
+    res.json({
+      screenIds: assignments.map((a) => a.screenId),
+      screens: assignments.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit })),
+    });
   } catch (error) {
     console.error('Get admin screens error:', error);
     res.status(500).json({ error: 'Failed to get admin screens' });
+  }
+};
+
+// Set message limits per screen for an admin (Super Admin for any admin, or Admin for self)
+exports.setAdminScreenLimits = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { screenLimits } = req.body;
+    const isSuperAdmin = req.user.role === 'super_admin';
+    const isSelf = req.user.id === id;
+
+    if (!isSuperAdmin && !isSelf) {
+      return res.status(403).json({ error: 'You can only set screen limits for your own account' });
+    }
+
+    if (!Array.isArray(screenLimits)) {
+      return res.status(400).json({ error: 'screenLimits must be an array of { screenId, messageLimit }' });
+    }
+
+    const admin = await prisma.adminUser.findUnique({
+      where: { id },
+      include: {
+        assignedScreens: {
+          select: { screenId: true, messageLimit: true },
+        },
+      },
+    });
+
+    if (!admin) {
+      return res.status(404).json({ error: 'Admin not found' });
+    }
+
+    const assignedScreenIds = admin.assignedScreens.map((a) => a.screenId);
+    const totalLimit = admin.totalMessageLimit ?? 0;
+
+    let sum = 0;
+    const updates = [];
+    for (const item of screenLimits) {
+      const screenId = String(item.screenId);
+      if (!assignedScreenIds.includes(screenId)) {
+        return res.status(400).json({ error: `Screen ${screenId} is not assigned to this admin` });
+      }
+      const limit = item.messageLimit == null || item.messageLimit === '' ? null : parseInt(item.messageLimit, 10);
+      if (limit !== null && (isNaN(limit) || limit < 0)) {
+        return res.status(400).json({ error: `messageLimit for screen ${screenId} must be a non-negative integer` });
+      }
+      sum += limit ?? 0;
+      updates.push({ screenId, messageLimit: limit });
+    }
+
+    if (totalLimit > 0 && sum > totalLimit) {
+      return res.status(400).json({
+        error: `Total allocated message limit (${sum}) cannot exceed admin total message limit (${totalLimit})`,
+      });
+    }
+
+    for (const { screenId, messageLimit } of updates) {
+      await prisma.adminScreenAssignment.updateMany({
+        where: { adminId: id, screenId },
+        data: { messageLimit },
+      });
+    }
+
+    const adminWithScreens = await prisma.adminUser.findUnique({
+      where: { id },
+      include: {
+        assignedScreens: {
+          select: { screenId: true, messageLimit: true },
+        },
+      },
+    });
+
+    const adminData = excludePassword(adminWithScreens);
+    adminData.assignedScreenIds = adminWithScreens.assignedScreens.map((a) => a.screenId);
+    adminData.totalMessageLimit = adminWithScreens.totalMessageLimit ?? null;
+    adminData.screenLimits = adminWithScreens.assignedScreens.map((a) => ({ screenId: a.screenId, messageLimit: a.messageLimit }));
+
+    res.json({ user: adminData });
+  } catch (error) {
+    console.error('Set admin screen limits error:', error);
+    res.status(500).json({ error: 'Failed to set screen limits' });
   }
 };
 
