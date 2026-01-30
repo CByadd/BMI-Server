@@ -92,6 +92,8 @@ model AdminUser {
   role               String                  @db.VarChar(20) // 'super_admin' or 'admin'
   totalMessageLimit  Int?                    // Total message (SMS) limit for this admin; set by super admin (admin role only)
   totalWhatsAppLimit Int?                    // Total WhatsApp message limit for this admin; set by super admin (admin role only)
+  smsUsedCount       Int?                    @default(0) // Total SMS messages sent by this admin (across all assigned screens)
+  whatsappUsedCount  Int?                    @default(0) // Total WhatsApp messages sent by this admin (across all assigned screens)
   isActive           Boolean                 @default(true)
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt

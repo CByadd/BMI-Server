@@ -15,6 +15,7 @@ router.delete('/auth/admin/:id', authenticateToken, requireSuperAdmin, authContr
 router.post('/auth/admin/:id/assign-screens', authenticateToken, requireSuperAdmin, authController.assignScreens);
 router.get('/auth/admin/:id/screens', authenticateToken, authController.getAdminScreens);
 router.put('/auth/admin/:id/screen-limits', authenticateToken, authController.setAdminScreenLimits);
+router.post('/auth/admin/:id/reset-usage', authenticateToken, requireSuperAdmin, authController.resetAdminUsage);
 
 module.exports = router;
 

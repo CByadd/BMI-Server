@@ -54,45 +54,48 @@ async function getWhatsAppLimitColumnsExist() {
 async function getAdminMessageLimitMaps() {
   const exist = await getMessageLimitColumnsExist();
   if (!exist) {
-    return { adminTotal: new Map(), assignmentLimits: new Map() };
+    return { adminTotal: new Map(), adminUsed: new Map(), assignmentLimits: new Map() };
   }
   try {
-    const adminRows = await prisma.$queryRaw`SELECT id, "totalMessageLimit" FROM "AdminUser"`;
+    const adminRows = await prisma.$queryRaw`SELECT id, "totalMessageLimit", COALESCE("smsUsedCount", 0) as "smsUsedCount" FROM "AdminUser"`;
     const assignmentRows = await prisma.$queryRaw`SELECT "adminId", "screenId", "messageLimit" FROM "AdminScreenAssignment"`;
     const adminTotal = new Map(adminRows.map((r) => [r.id, r.totalMessageLimit ?? null]));
+    const adminUsed = new Map(adminRows.map((r) => [r.id, Number(r.smsUsedCount) || 0]));
     const assignmentLimits = new Map();
     for (const r of assignmentRows) {
       if (!assignmentLimits.has(r.adminId)) assignmentLimits.set(r.adminId, new Map());
       assignmentLimits.get(r.adminId).set(r.screenId, r.messageLimit ?? null);
     }
-    return { adminTotal, assignmentLimits };
+    return { adminTotal, adminUsed, assignmentLimits };
   } catch (e) {
-    return { adminTotal: new Map(), assignmentLimits: new Map() };
+    return { adminTotal: new Map(), adminUsed: new Map(), assignmentLimits: new Map() };
   }
 }
 
 async function getAdminWhatsAppLimitMaps() {
   const exist = await getWhatsAppLimitColumnsExist();
   if (!exist) {
-    return { adminTotal: new Map(), assignmentLimits: new Map() };
+    return { adminTotal: new Map(), adminUsed: new Map(), assignmentLimits: new Map() };
   }
   try {
-    const adminRows = await prisma.$queryRaw`SELECT id, "totalWhatsAppLimit" FROM "AdminUser"`;
+    const adminRows = await prisma.$queryRaw`SELECT id, "totalWhatsAppLimit", COALESCE("whatsappUsedCount", 0) as "whatsappUsedCount" FROM "AdminUser"`;
     const assignmentRows = await prisma.$queryRaw`SELECT "adminId", "screenId", "whatsappLimit" FROM "AdminScreenAssignment"`;
     const adminTotal = new Map(adminRows.map((r) => [r.id, r.totalWhatsAppLimit ?? null]));
+    const adminUsed = new Map(adminRows.map((r) => [r.id, Number(r.whatsappUsedCount) || 0]));
     const assignmentLimits = new Map();
     for (const r of assignmentRows) {
       if (!assignmentLimits.has(r.adminId)) assignmentLimits.set(r.adminId, new Map());
       assignmentLimits.get(r.adminId).set(r.screenId, r.whatsappLimit ?? null);
     }
-    return { adminTotal, assignmentLimits };
+    return { adminTotal, adminUsed, assignmentLimits };
   } catch (e) {
-    return { adminTotal: new Map(), assignmentLimits: new Map() };
+    return { adminTotal: new Map(), adminUsed: new Map(), assignmentLimits: new Map() };
   }
 }
 
-function mergeMessageLimitsIntoAdmin(adminData, adminId, { adminTotal, assignmentLimits }) {
+function mergeMessageLimitsIntoAdmin(adminData, adminId, { adminTotal, adminUsed, assignmentLimits }) {
   adminData.totalMessageLimit = adminTotal.has(adminId) ? adminTotal.get(adminId) : null;
+  adminData.smsUsedCount = adminUsed.has(adminId) ? adminUsed.get(adminId) : 0;
   const screenMap = assignmentLimits.get(adminId);
   adminData.screenLimits = (adminData.assignedScreenIds || []).map((screenId) => ({
     screenId,
@@ -101,8 +104,9 @@ function mergeMessageLimitsIntoAdmin(adminData, adminId, { adminTotal, assignmen
   return adminData;
 }
 
-async function mergeWhatsAppLimitsIntoAdmin(adminData, adminId, { adminTotal, assignmentLimits }) {
+async function mergeWhatsAppLimitsIntoAdmin(adminData, adminId, { adminTotal, adminUsed, assignmentLimits }) {
   adminData.totalWhatsAppLimit = adminTotal.has(adminId) ? adminTotal.get(adminId) : null;
+  adminData.whatsappUsedCount = adminUsed.has(adminId) ? adminUsed.get(adminId) : 0;
   const screenMap = assignmentLimits.get(adminId);
   if (!adminData.screenLimits) {
     adminData.screenLimits = (adminData.assignedScreenIds || []).map((screenId) => ({ screenId, messageLimit: null, whatsappLimit: null }));
@@ -716,6 +720,66 @@ exports.setAdminScreenLimits = async (req, res) => {
   } catch (error) {
     console.error('Set admin screen limits error:', error);
     res.status(500).json({ error: 'Failed to set screen limits' });
+  }
+};
+
+// Reset admin usage and optionally update limits (Super Admin only)
+exports.resetAdminUsage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { resetSmsUsage, resetWhatsAppUsage, resetSmsLimit, resetWhatsAppLimit } = req.body;
+
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Super admin access required' });
+    }
+
+    const admin = await prisma.adminUser.findUnique({
+      where: { id },
+    });
+
+    if (!admin) {
+      return res.status(404).json({ error: 'Admin not found' });
+    }
+
+    try {
+      await prisma.$executeRawUnsafe(`ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "smsUsedCount" INTEGER DEFAULT 0`);
+      await prisma.$executeRawUnsafe(`ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "whatsappUsedCount" INTEGER DEFAULT 0`);
+    } catch (_) {}
+
+    if (resetSmsUsage === true) {
+      await prisma.$executeRaw`UPDATE "AdminUser" SET "smsUsedCount" = 0 WHERE id = CAST(${id} AS uuid)`;
+    }
+    if (resetWhatsAppUsage === true) {
+      await prisma.$executeRaw`UPDATE "AdminUser" SET "whatsappUsedCount" = 0 WHERE id = CAST(${id} AS uuid)`;
+    }
+    if (resetSmsLimit === true) {
+      const exist = await getMessageLimitColumnsExist();
+      if (exist) {
+        await prisma.$executeRaw`UPDATE "AdminUser" SET "totalMessageLimit" = NULL WHERE id = CAST(${id} AS uuid)`;
+      }
+    }
+    if (resetWhatsAppLimit === true) {
+      const exist = await getWhatsAppLimitColumnsExist();
+      if (exist) {
+        await prisma.$executeRaw`UPDATE "AdminUser" SET "totalWhatsAppLimit" = NULL WHERE id = CAST(${id} AS uuid)`;
+      }
+    }
+
+    const adminWithScreens = await prisma.adminUser.findUnique({
+      where: { id },
+      include: {
+        assignedScreens: { select: { screenId: true } },
+      },
+    });
+
+    const adminData = excludePassword(adminWithScreens);
+    adminData.assignedScreenIds = adminWithScreens.assignedScreens.map((a) => a.screenId);
+    await mergeAllLimitsIntoAdmin(adminData, id);
+
+    res.json({ user: adminData });
+  } catch (error) {
+    console.error('Reset admin usage error:', error);
+    res.status(500).json({ error: 'Failed to reset admin usage' });
   }
 };
 

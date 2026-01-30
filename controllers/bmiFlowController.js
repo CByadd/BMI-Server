@@ -578,12 +578,14 @@ exports.paymentSuccess = async (req, res, io) => {
             // SMS: enabled when (1) screen is not assigned to any admin — super admin can enable for those screens,
             // or (2) at least one assigned admin has totalMessageLimit > 0 (super admin has set a limit for that admin).
             let smsAllowedByAdmin = true;
+            let assignedAdmins = [];
             try {
                 const adminLimitRows = await prisma.$queryRawUnsafe(
-                    `SELECT au."totalMessageLimit" FROM "AdminScreenAssignment" asa JOIN "AdminUser" au ON au.id = asa."adminId" WHERE asa."screenId" = $1`,
+                    `SELECT au.id, au."totalMessageLimit", COALESCE(au."smsUsedCount", 0) as "smsUsedCount" FROM "AdminScreenAssignment" asa JOIN "AdminUser" au ON au.id = asa."adminId" WHERE asa."screenId" = $1`,
                     updatedBMI.screenId
                 );
                 if (Array.isArray(adminLimitRows) && adminLimitRows.length > 0) {
+                    assignedAdmins = adminLimitRows;
                     smsAllowedByAdmin = adminLimitRows.some((r) => r.totalMessageLimit != null && Number(r.totalMessageLimit) > 0);
                 }
                 // else: no assigned admins → keep true so super admin can enable SMS for this screen
@@ -591,7 +593,16 @@ exports.paymentSuccess = async (req, res, io) => {
             if (smsConfig && smsConfig.smsEnabled && updatedBMI.user && updatedBMI.user.mobile && smsAllowedByAdmin) {
                 const limit = smsConfig.smsLimitPerScreen != null ? Number(smsConfig.smsLimitPerScreen) : null;
                 const sent = (smsConfig.smsSentCount != null ? Number(smsConfig.smsSentCount) : 0) || 0;
-                if (limit == null || sent < limit) {
+                // Check admin-level limits: find an admin that has limit > 0 and usage < limit
+                let canSendAtAdminLevel = assignedAdmins.length === 0; // No assigned admins = super admin managed, allow
+                if (assignedAdmins.length > 0) {
+                    canSendAtAdminLevel = assignedAdmins.some((admin) => {
+                        const adminLimit = admin.totalMessageLimit != null ? Number(admin.totalMessageLimit) : null;
+                        const adminUsed = Number(admin.smsUsedCount) || 0;
+                        return adminLimit != null && adminLimit > 0 && adminUsed < adminLimit;
+                    });
+                }
+                if ((limit == null || sent < limit) && canSendAtAdminLevel) {
                     const smsMessage = buildPostPaymentMessage(
                         postPaymentSmsTemplate,
                         updatedBMI.weightKg,
@@ -605,19 +616,40 @@ exports.paymentSuccess = async (req, res, io) => {
                     });
                     if (sr.success) {
                         console.log('[PAYMENT_FLOW] ✅ Post-payment SMS sent to', updatedBMI.user.mobile);
+                        // Increment screen-level count
+                        await prisma.$executeRawUnsafe(
+                            `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
+                        );
+                        await prisma.$executeRawUnsafe(
+                            `UPDATE "AdscapePlayer" SET "smsSentCount" = COALESCE("smsSentCount", 0) + 1 WHERE "screenId" = $1`,
+                            updatedBMI.screenId
+                        );
+                        // Increment admin-level usage for all assigned admins (if any)
+                        if (assignedAdmins.length > 0) {
+                            try {
+                                await prisma.$executeRawUnsafe(
+                                    `ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "smsUsedCount" INTEGER DEFAULT 0`
+                                );
+                                for (const admin of assignedAdmins) {
+                                    const adminLimit = admin.totalMessageLimit != null ? Number(admin.totalMessageLimit) : null;
+                                    if (adminLimit != null && adminLimit > 0) {
+                                        await prisma.$executeRawUnsafe(
+                                            `UPDATE "AdminUser" SET "smsUsedCount" = COALESCE("smsUsedCount", 0) + 1 WHERE id = CAST($1 AS uuid)`,
+                                            admin.id
+                                        );
+                                    }
+                                }
+                            } catch (_) {}
+                        }
                     } else {
                         console.warn('[PAYMENT_FLOW] Post-payment SMS failed:', sr.error, sr.errorCode);
                     }
-                    // Increment SMS count
-                    await prisma.$executeRawUnsafe(
-                        `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
-                    );
-                    await prisma.$executeRawUnsafe(
-                        `UPDATE "AdscapePlayer" SET "smsSentCount" = COALESCE("smsSentCount", 0) + 1 WHERE "screenId" = $1`,
-                        updatedBMI.screenId
-                    );
                 } else {
-                    console.log('[PAYMENT_FLOW] SMS skipped: screen limit reached', { sent, limit });
+                    if (!canSendAtAdminLevel) {
+                        console.log('[PAYMENT_FLOW] SMS skipped: admin limit reached', { admins: assignedAdmins.map(a => ({ id: a.id, limit: a.totalMessageLimit, used: a.smsUsedCount })) });
+                    } else {
+                        console.log('[PAYMENT_FLOW] SMS skipped: screen limit reached', { sent, limit });
+                    }
                 }
             } else if (smsConfig && smsConfig.smsEnabled && (!updatedBMI.user || !updatedBMI.user.mobile)) {
                 console.log('[PAYMENT_FLOW] SMS skipped: no user mobile');
@@ -649,12 +681,14 @@ exports.paymentSuccess = async (req, res, io) => {
             // WhatsApp: enabled when (1) screen is not assigned to any admin — super admin can enable for those screens,
             // or (2) at least one assigned admin has totalWhatsAppLimit > 0 (super admin has set a limit for that admin).
             let whatsappAllowedByAdmin = true;
+            let assignedAdminsWa = [];
             try {
                 const adminWaRows = await prisma.$queryRawUnsafe(
-                    `SELECT au."totalWhatsAppLimit" FROM "AdminScreenAssignment" asa JOIN "AdminUser" au ON au.id = asa."adminId" WHERE asa."screenId" = $1`,
+                    `SELECT au.id, au."totalWhatsAppLimit", COALESCE(au."whatsappUsedCount", 0) as "whatsappUsedCount" FROM "AdminScreenAssignment" asa JOIN "AdminUser" au ON au.id = asa."adminId" WHERE asa."screenId" = $1`,
                     updatedBMI.screenId
                 );
                 if (Array.isArray(adminWaRows) && adminWaRows.length > 0) {
+                    assignedAdminsWa = adminWaRows;
                     whatsappAllowedByAdmin = adminWaRows.some((r) => r.totalWhatsAppLimit != null && Number(r.totalWhatsAppLimit) > 0);
                 }
                 // else: no assigned admins → keep true so super admin can enable WhatsApp for this screen
@@ -662,7 +696,16 @@ exports.paymentSuccess = async (req, res, io) => {
             if (waConfig && waConfig.whatsappEnabled && updatedBMI.user && updatedBMI.user.mobile && whatsappAllowedByAdmin) {
                 const waLimit = waConfig.whatsappLimitPerScreen != null ? Number(waConfig.whatsappLimitPerScreen) : null;
                 const waSent = (waConfig.whatsappSentCount != null ? Number(waConfig.whatsappSentCount) : 0) || 0;
-                if (waLimit == null || waSent < waLimit) {
+                // Check admin-level limits: find an admin that has limit > 0 and usage < limit
+                let canSendAtAdminLevel = assignedAdminsWa.length === 0; // No assigned admins = super admin managed, allow
+                if (assignedAdminsWa.length > 0) {
+                    canSendAtAdminLevel = assignedAdminsWa.some((admin) => {
+                        const adminLimit = admin.totalWhatsAppLimit != null ? Number(admin.totalWhatsAppLimit) : null;
+                        const adminUsed = Number(admin.whatsappUsedCount) || 0;
+                        return adminLimit != null && adminLimit > 0 && adminUsed < adminLimit;
+                    });
+                }
+                if ((waLimit == null || waSent < waLimit) && canSendAtAdminLevel) {
                     const waResult = await sendWellTemplate({
                         receiver: updatedBMI.user.mobile,
                         name: updatedBMI.user.name || 'User',
@@ -674,19 +717,40 @@ exports.paymentSuccess = async (req, res, io) => {
                     });
                     if (waResult.success) {
                         console.log('[PAYMENT_FLOW] ✅ Post-payment WhatsApp (well) sent to', updatedBMI.user.mobile);
+                        // Increment screen-level count
+                        await prisma.$executeRawUnsafe(
+                            `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappSentCount" INTEGER DEFAULT 0`
+                        );
+                        await prisma.$executeRawUnsafe(
+                            `UPDATE "AdscapePlayer" SET "whatsappSentCount" = COALESCE("whatsappSentCount", 0) + 1 WHERE "screenId" = $1`,
+                            updatedBMI.screenId
+                        );
+                        // Increment admin-level usage for all assigned admins (if any)
+                        if (assignedAdminsWa.length > 0) {
+                            try {
+                                await prisma.$executeRawUnsafe(
+                                    `ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "whatsappUsedCount" INTEGER DEFAULT 0`
+                                );
+                                for (const admin of assignedAdminsWa) {
+                                    const adminLimit = admin.totalWhatsAppLimit != null ? Number(admin.totalWhatsAppLimit) : null;
+                                    if (adminLimit != null && adminLimit > 0) {
+                                        await prisma.$executeRawUnsafe(
+                                            `UPDATE "AdminUser" SET "whatsappUsedCount" = COALESCE("whatsappUsedCount", 0) + 1 WHERE id = CAST($1 AS uuid)`,
+                                            admin.id
+                                        );
+                                    }
+                                }
+                            } catch (_) {}
+                        }
                     } else {
                         console.warn('[PAYMENT_FLOW] Post-payment WhatsApp failed:', waResult.error, waResult.errorCode);
                     }
-                    // Increment WhatsApp count
-                    await prisma.$executeRawUnsafe(
-                        `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappSentCount" INTEGER DEFAULT 0`
-                    );
-                    await prisma.$executeRawUnsafe(
-                        `UPDATE "AdscapePlayer" SET "whatsappSentCount" = COALESCE("whatsappSentCount", 0) + 1 WHERE "screenId" = $1`,
-                        updatedBMI.screenId
-                    );
                 } else {
-                    console.log('[PAYMENT_FLOW] WhatsApp skipped: screen limit reached', { sent: waSent, limit: waLimit });
+                    if (!canSendAtAdminLevel) {
+                        console.log('[PAYMENT_FLOW] WhatsApp skipped: admin limit reached', { admins: assignedAdminsWa.map(a => ({ id: a.id, limit: a.totalWhatsAppLimit, used: a.whatsappUsedCount })) });
+                    } else {
+                        console.log('[PAYMENT_FLOW] WhatsApp skipped: screen limit reached', { sent: waSent, limit: waLimit });
+                    }
                 }
             } else if (waConfig && waConfig.whatsappEnabled && (!updatedBMI.user || !updatedBMI.user.mobile)) {
                 console.log('[PAYMENT_FLOW] WhatsApp skipped: no user mobile');

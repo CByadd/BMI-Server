@@ -13,6 +13,7 @@
     "prisma:migrate-health-tip": "prisma db execute --file migration_add_health_tip_to_bmi.sql --schema prisma/schema.prisma",
     "prisma:migrate-admin-message-limits": "prisma db execute --file migration_admin_message_limits.sql --schema prisma/schema.prisma",
     "prisma:migrate-whatsapp-limits": "prisma db execute --file migration_whatsapp_limits.sql --schema prisma/schema.prisma",
+    "prisma:migrate-admin-usage-tracking": "prisma db execute --file migration_admin_usage_tracking.sql --schema prisma/schema.prisma",
     "migrate:admin-message-limits": "node scripts/run-admin-message-limits-migration.js",
     "test:sms": "node scripts/test-sms.js"
   },
