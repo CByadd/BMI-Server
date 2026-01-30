@@ -558,7 +558,11 @@ exports.paymentSuccess = async (req, res, io) => {
             return String(template)
                 .replace(/\{\{weight\}\}/g, weightKg != null ? Number(weightKg) : '')
                 .replace(/\{\{bmi\}\}/g, bmi != null ? Number(bmi) : '')
-                .replace(/\{\{url\}\}/g, visitUrl);
+                .replace(/\{\{url\}\}/g, visitUrl)
+                .replace(/\n/g, ' ') // Replace newlines with spaces for SMS
+                .replace(/\r/g, '') // Remove carriage returns
+                .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+                .trim(); // Remove leading/trailing spaces
         };
         try {
             await prisma.$executeRawUnsafe(
