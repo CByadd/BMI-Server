@@ -57,10 +57,25 @@ async function getAdminMessageLimitMaps() {
     return { adminTotal: new Map(), adminUsed: new Map(), assignmentLimits: new Map() };
   }
   try {
-    const adminRows = await prisma.$queryRaw`SELECT id, "totalMessageLimit", COALESCE("smsUsedCount", 0) as "smsUsedCount" FROM "AdminUser"`;
+    // Check if usage columns exist
+    let usageColumnsExist = false;
+    try {
+      await prisma.$queryRaw`SELECT "smsUsedCount" FROM "AdminUser" LIMIT 0`;
+      usageColumnsExist = true;
+    } catch (_) {
+      usageColumnsExist = false;
+    }
+    
+    let adminRows;
+    if (usageColumnsExist) {
+      adminRows = await prisma.$queryRaw`SELECT id, "totalMessageLimit", COALESCE("smsUsedCount", 0) as "smsUsedCount" FROM "AdminUser"`;
+    } else {
+      adminRows = await prisma.$queryRaw`SELECT id, "totalMessageLimit" FROM "AdminUser"`;
+    }
+    
     const assignmentRows = await prisma.$queryRaw`SELECT "adminId", "screenId", "messageLimit" FROM "AdminScreenAssignment"`;
     const adminTotal = new Map(adminRows.map((r) => [r.id, r.totalMessageLimit ?? null]));
-    const adminUsed = new Map(adminRows.map((r) => [r.id, Number(r.smsUsedCount) || 0]));
+    const adminUsed = new Map(adminRows.map((r) => [r.id, usageColumnsExist && r.smsUsedCount != null ? Number(r.smsUsedCount) || 0 : 0]));
     const assignmentLimits = new Map();
     for (const r of assignmentRows) {
       if (!assignmentLimits.has(r.adminId)) assignmentLimits.set(r.adminId, new Map());
@@ -78,10 +93,25 @@ async function getAdminWhatsAppLimitMaps() {
     return { adminTotal: new Map(), adminUsed: new Map(), assignmentLimits: new Map() };
   }
   try {
-    const adminRows = await prisma.$queryRaw`SELECT id, "totalWhatsAppLimit", COALESCE("whatsappUsedCount", 0) as "whatsappUsedCount" FROM "AdminUser"`;
+    // Check if usage columns exist
+    let usageColumnsExist = false;
+    try {
+      await prisma.$queryRaw`SELECT "whatsappUsedCount" FROM "AdminUser" LIMIT 0`;
+      usageColumnsExist = true;
+    } catch (_) {
+      usageColumnsExist = false;
+    }
+    
+    let adminRows;
+    if (usageColumnsExist) {
+      adminRows = await prisma.$queryRaw`SELECT id, "totalWhatsAppLimit", COALESCE("whatsappUsedCount", 0) as "whatsappUsedCount" FROM "AdminUser"`;
+    } else {
+      adminRows = await prisma.$queryRaw`SELECT id, "totalWhatsAppLimit" FROM "AdminUser"`;
+    }
+    
     const assignmentRows = await prisma.$queryRaw`SELECT "adminId", "screenId", "whatsappLimit" FROM "AdminScreenAssignment"`;
     const adminTotal = new Map(adminRows.map((r) => [r.id, r.totalWhatsAppLimit ?? null]));
-    const adminUsed = new Map(adminRows.map((r) => [r.id, Number(r.whatsappUsedCount) || 0]));
+    const adminUsed = new Map(adminRows.map((r) => [r.id, usageColumnsExist && r.whatsappUsedCount != null ? Number(r.whatsappUsedCount) || 0 : 0]));
     const assignmentLimits = new Map();
     for (const r of assignmentRows) {
       if (!assignmentLimits.has(r.adminId)) assignmentLimits.set(r.adminId, new Map());

@@ -575,6 +575,13 @@ exports.paymentSuccess = async (req, res, io) => {
                 updatedBMI.screenId
             );
             const smsConfig = smsConfigRows && smsConfigRows[0] ? smsConfigRows[0] : null;
+            console.log('[PAYMENT_FLOW] SMS Config:', { 
+                exists: !!smsConfig, 
+                smsEnabled: smsConfig?.smsEnabled, 
+                limit: smsConfig?.smsLimitPerScreen, 
+                sent: smsConfig?.smsSentCount,
+                screenId: updatedBMI.screenId 
+            });
             // SMS: enabled when (1) screen is not assigned to any admin — super admin can enable for those screens,
             // or (2) at least one assigned admin has totalMessageLimit > 0 (super admin has set a limit for that admin).
             let smsAllowedByAdmin = true;
@@ -587,9 +594,26 @@ exports.paymentSuccess = async (req, res, io) => {
                 if (Array.isArray(adminLimitRows) && adminLimitRows.length > 0) {
                     assignedAdmins = adminLimitRows;
                     smsAllowedByAdmin = adminLimitRows.some((r) => r.totalMessageLimit != null && Number(r.totalMessageLimit) > 0);
+                    console.log('[PAYMENT_FLOW] SMS Admin Check:', { 
+                        assignedAdmins: assignedAdmins.length, 
+                        smsAllowedByAdmin, 
+                        admins: assignedAdmins.map(a => ({ id: a.id, limit: a.totalMessageLimit, used: a.smsUsedCount }))
+                    });
+                } else {
+                    console.log('[PAYMENT_FLOW] SMS Admin Check: No assigned admins, allowing (super admin managed)');
                 }
                 // else: no assigned admins → keep true so super admin can enable SMS for this screen
-            } catch (_) {}
+            } catch (e) {
+                console.log('[PAYMENT_FLOW] SMS Admin Check Error:', e.message);
+            }
+            console.log('[PAYMENT_FLOW] SMS Send Conditions:', {
+                hasConfig: !!smsConfig,
+                smsEnabled: smsConfig?.smsEnabled,
+                hasUser: !!updatedBMI.user,
+                hasMobile: !!(updatedBMI.user && updatedBMI.user.mobile),
+                smsAllowedByAdmin,
+                allConditionsMet: !!(smsConfig && smsConfig.smsEnabled && updatedBMI.user && updatedBMI.user.mobile && smsAllowedByAdmin)
+            });
             if (smsConfig && smsConfig.smsEnabled && updatedBMI.user && updatedBMI.user.mobile && smsAllowedByAdmin) {
                 const limit = smsConfig.smsLimitPerScreen != null ? Number(smsConfig.smsLimitPerScreen) : null;
                 const sent = (smsConfig.smsSentCount != null ? Number(smsConfig.smsSentCount) : 0) || 0;
@@ -651,8 +675,16 @@ exports.paymentSuccess = async (req, res, io) => {
                         console.log('[PAYMENT_FLOW] SMS skipped: screen limit reached', { sent, limit });
                     }
                 }
-            } else if (smsConfig && smsConfig.smsEnabled && (!updatedBMI.user || !updatedBMI.user.mobile)) {
-                console.log('[PAYMENT_FLOW] SMS skipped: no user mobile');
+            } else {
+                if (!smsConfig) {
+                    console.log('[PAYMENT_FLOW] SMS skipped: no SMS config found');
+                } else if (!smsConfig.smsEnabled) {
+                    console.log('[PAYMENT_FLOW] SMS skipped: SMS not enabled for screen');
+                } else if (!updatedBMI.user || !updatedBMI.user.mobile) {
+                    console.log('[PAYMENT_FLOW] SMS skipped: no user mobile');
+                } else if (!smsAllowedByAdmin) {
+                    console.log('[PAYMENT_FLOW] SMS skipped: not allowed by admin (no admin with totalMessageLimit > 0)');
+                }
             }
         } catch (smsErr) {
             if ((smsErr.code === '42703' || (smsErr.message && smsErr.message.includes('does not exist')))) {
@@ -678,6 +710,13 @@ exports.paymentSuccess = async (req, res, io) => {
                 updatedBMI.screenId
             );
             const waConfig = waConfigRows && waConfigRows[0] ? waConfigRows[0] : null;
+            console.log('[PAYMENT_FLOW] WhatsApp Config:', { 
+                exists: !!waConfig, 
+                whatsappEnabled: waConfig?.whatsappEnabled, 
+                limit: waConfig?.whatsappLimitPerScreen, 
+                sent: waConfig?.whatsappSentCount,
+                screenId: updatedBMI.screenId 
+            });
             // WhatsApp: enabled when (1) screen is not assigned to any admin — super admin can enable for those screens,
             // or (2) at least one assigned admin has totalWhatsAppLimit > 0 (super admin has set a limit for that admin).
             let whatsappAllowedByAdmin = true;
@@ -690,9 +729,26 @@ exports.paymentSuccess = async (req, res, io) => {
                 if (Array.isArray(adminWaRows) && adminWaRows.length > 0) {
                     assignedAdminsWa = adminWaRows;
                     whatsappAllowedByAdmin = adminWaRows.some((r) => r.totalWhatsAppLimit != null && Number(r.totalWhatsAppLimit) > 0);
+                    console.log('[PAYMENT_FLOW] WhatsApp Admin Check:', { 
+                        assignedAdmins: assignedAdminsWa.length, 
+                        whatsappAllowedByAdmin, 
+                        admins: assignedAdminsWa.map(a => ({ id: a.id, limit: a.totalWhatsAppLimit, used: a.whatsappUsedCount }))
+                    });
+                } else {
+                    console.log('[PAYMENT_FLOW] WhatsApp Admin Check: No assigned admins, allowing (super admin managed)');
                 }
                 // else: no assigned admins → keep true so super admin can enable WhatsApp for this screen
-            } catch (_) {}
+            } catch (e) {
+                console.log('[PAYMENT_FLOW] WhatsApp Admin Check Error:', e.message);
+            }
+            console.log('[PAYMENT_FLOW] WhatsApp Send Conditions:', {
+                hasConfig: !!waConfig,
+                whatsappEnabled: waConfig?.whatsappEnabled,
+                hasUser: !!updatedBMI.user,
+                hasMobile: !!(updatedBMI.user && updatedBMI.user.mobile),
+                whatsappAllowedByAdmin,
+                allConditionsMet: !!(waConfig && waConfig.whatsappEnabled && updatedBMI.user && updatedBMI.user.mobile && whatsappAllowedByAdmin)
+            });
             if (waConfig && waConfig.whatsappEnabled && updatedBMI.user && updatedBMI.user.mobile && whatsappAllowedByAdmin) {
                 const waLimit = waConfig.whatsappLimitPerScreen != null ? Number(waConfig.whatsappLimitPerScreen) : null;
                 const waSent = (waConfig.whatsappSentCount != null ? Number(waConfig.whatsappSentCount) : 0) || 0;
@@ -752,8 +808,16 @@ exports.paymentSuccess = async (req, res, io) => {
                         console.log('[PAYMENT_FLOW] WhatsApp skipped: screen limit reached', { sent: waSent, limit: waLimit });
                     }
                 }
-            } else if (waConfig && waConfig.whatsappEnabled && (!updatedBMI.user || !updatedBMI.user.mobile)) {
-                console.log('[PAYMENT_FLOW] WhatsApp skipped: no user mobile');
+            } else {
+                if (!waConfig) {
+                    console.log('[PAYMENT_FLOW] WhatsApp skipped: no WhatsApp config found');
+                } else if (!waConfig.whatsappEnabled) {
+                    console.log('[PAYMENT_FLOW] WhatsApp skipped: WhatsApp not enabled for screen');
+                } else if (!updatedBMI.user || !updatedBMI.user.mobile) {
+                    console.log('[PAYMENT_FLOW] WhatsApp skipped: no user mobile');
+                } else if (!whatsappAllowedByAdmin) {
+                    console.log('[PAYMENT_FLOW] WhatsApp skipped: not allowed by admin (no admin with totalWhatsAppLimit > 0)');
+                }
             }
         } catch (waErr) {
             if ((waErr.code === '42703' || (waErr.message && waErr.message.includes('does not exist')))) {
