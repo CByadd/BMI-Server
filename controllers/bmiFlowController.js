@@ -632,14 +632,69 @@ exports.paymentSuccess = async (req, res, io) => {
                         updatedBMI.weightKg,
                         updatedBMI.bmi
                     );
+                    
+                    // Log SMS config and details before sending
+                    const smsCredentials = {
+                        apiBaseUrl: process.env.OTP_API_BASE_URL || 'http://sms6.rmlconnect.net:8080',
+                        username: process.env.OTP_USERNAME || '',
+                        password: process.env.OTP_PASSWORD ? '***' + process.env.OTP_PASSWORD.slice(-2) : '***', // Mask password, show last 2 chars
+                        source: process.env.OTP_SOURCE || '',
+                        entityId: process.env.OTP_ENTITY_ID || '',
+                        templateId: process.env.OTP_TEMPLATE_ID || '',
+                        dltEnabled: !!(process.env.OTP_ENTITY_ID && process.env.OTP_TEMPLATE_ID),
+                        hasCredentials: !!(process.env.OTP_API_BASE_URL && process.env.OTP_USERNAME && process.env.OTP_PASSWORD && process.env.OTP_SOURCE)
+                    };
+                    
+                    console.log('[PAYMENT_FLOW] 📱 SMS SENDING - CONFIG & DETAILS:', {
+                        screenId: updatedBMI.screenId,
+                        userId: updatedBMI.user.id,
+                        userMobile: updatedBMI.user.mobile,
+                        userName: updatedBMI.user.name,
+                        smsCredentials: smsCredentials,
+                        smsConfig: {
+                            enabled: smsConfig.smsEnabled,
+                            limitPerScreen: smsConfig.smsLimitPerScreen,
+                            sentCount: smsConfig.smsSentCount,
+                            remaining: limit != null ? (limit - sent) : 'unlimited'
+                        },
+                        adminLimits: assignedAdmins.length > 0 ? assignedAdmins.map(a => ({
+                            adminId: a.id,
+                            totalLimit: a.totalMessageLimit,
+                            used: a.smsUsedCount,
+                            remaining: a.totalMessageLimit != null ? (a.totalMessageLimit - (Number(a.smsUsedCount) || 0)) : null
+                        })) : 'No assigned admins (super admin managed)',
+                        message: {
+                            content: smsMessage,
+                            length: smsMessage.length,
+                            template: postPaymentSmsTemplate
+                        },
+                        limitsCheck: {
+                            screenLevel: {
+                                limit: limit,
+                                sent: sent,
+                                canSend: limit == null || sent < limit
+                            },
+                            adminLevel: {
+                                canSend: canSendAtAdminLevel,
+                                assignedAdminsCount: assignedAdmins.length
+                            }
+                        }
+                    });
+                    
                     const sr = await sendBulkSms({
                         destination: updatedBMI.user.mobile,
                         message: smsMessage,
                         type: 0,
                         dlr: 0
                     });
+                    
                     if (sr.success) {
-                        console.log('[PAYMENT_FLOW] ✅ Post-payment SMS sent to', updatedBMI.user.mobile);
+                        console.log('[PAYMENT_FLOW] ✅ Post-payment SMS sent successfully:', {
+                            destination: updatedBMI.user.mobile,
+                            messageId: sr.messageId || 'N/A',
+                            response: sr
+                        });
+                        
                         // Increment screen-level count
                         await prisma.$executeRawUnsafe(
                             `ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsSentCount" INTEGER DEFAULT 0`
@@ -648,7 +703,16 @@ exports.paymentSuccess = async (req, res, io) => {
                             `UPDATE "AdscapePlayer" SET "smsSentCount" = COALESCE("smsSentCount", 0) + 1 WHERE "screenId" = $1`,
                             updatedBMI.screenId
                         );
+                        
+                        // Get updated screen count
+                        const updatedScreenCount = await prisma.$queryRawUnsafe(
+                            `SELECT COALESCE("smsSentCount", 0) as "smsSentCount" FROM "AdscapePlayer" WHERE "screenId" = $1 LIMIT 1`,
+                            updatedBMI.screenId
+                        );
+                        const newScreenSentCount = updatedScreenCount && updatedScreenCount[0] ? Number(updatedScreenCount[0].smsSentCount) : sent + 1;
+                        
                         // Increment admin-level usage for all assigned admins (if any)
+                        const updatedAdminCounts = [];
                         if (assignedAdmins.length > 0) {
                             try {
                                 await prisma.$executeRawUnsafe(
@@ -661,12 +725,51 @@ exports.paymentSuccess = async (req, res, io) => {
                                             `UPDATE "AdminUser" SET "smsUsedCount" = COALESCE("smsUsedCount", 0) + 1 WHERE id = CAST($1 AS uuid)`,
                                             admin.id
                                         );
+                                        // Get updated admin count
+                                        const updatedAdminCount = await prisma.$queryRawUnsafe(
+                                            `SELECT COALESCE("smsUsedCount", 0) as "smsUsedCount" FROM "AdminUser" WHERE id = CAST($1 AS uuid) LIMIT 1`,
+                                            admin.id
+                                        );
+                                        const newAdminUsedCount = updatedAdminCount && updatedAdminCount[0] ? Number(updatedAdminCount[0].smsUsedCount) : (Number(admin.smsUsedCount) || 0) + 1;
+                                        updatedAdminCounts.push({
+                                            adminId: admin.id,
+                                            previousUsed: Number(admin.smsUsedCount) || 0,
+                                            newUsed: newAdminUsedCount,
+                                            totalLimit: adminLimit,
+                                            remaining: adminLimit - newAdminUsedCount
+                                        });
                                     }
                                 }
                             } catch (_) {}
                         }
+                        
+                        console.log('[PAYMENT_FLOW] 📊 SMS COUNTS UPDATED:', {
+                            screenId: updatedBMI.screenId,
+                            screenLevel: {
+                                previousSent: sent,
+                                newSent: newScreenSentCount,
+                                limit: limit,
+                                remaining: limit != null ? (limit - newScreenSentCount) : 'unlimited'
+                            },
+                            adminLevel: updatedAdminCounts.length > 0 ? updatedAdminCounts : 'No admin limits to update'
+                        });
                     } else {
-                        console.warn('[PAYMENT_FLOW] Post-payment SMS failed:', sr.error, sr.errorCode);
+                        console.warn('[PAYMENT_FLOW] ❌ Post-payment SMS failed:', {
+                            destination: updatedBMI.user.mobile,
+                            error: sr.error,
+                            errorCode: sr.errorCode,
+                            response: sr,
+                            config: {
+                                screenId: updatedBMI.screenId,
+                                screenLimit: limit,
+                                screenSent: sent,
+                                adminLimits: assignedAdmins.map(a => ({
+                                    adminId: a.id,
+                                    limit: a.totalMessageLimit,
+                                    used: a.smsUsedCount
+                                }))
+                            }
+                        });
                     }
                 } else {
                     if (!canSendAtAdminLevel) {

@@ -1411,10 +1411,12 @@ exports.updateScreenConfig = async (req, res, io) => {
                             SET "smsEnabled" = ${smsEnabledValue}
                             WHERE "screenId" = ${String(screenId)}
                         `;
+                        console.log('[ADSCAPE] Updated smsEnabled to', smsEnabledValue, 'for screen:', screenId);
                     } catch (e) {
                         if (e.code === '42703' || e.message?.includes('does not exist')) {
                             await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "smsEnabled" BOOLEAN DEFAULT false`);
                             await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "smsEnabled" = ${smsEnabledValue} WHERE "screenId" = ${String(screenId)}`;
+                            console.log('[ADSCAPE] Created smsEnabled column and set to', smsEnabledValue, 'for screen:', screenId);
                         } else throw e;
                     }
                 }
@@ -1439,10 +1441,12 @@ exports.updateScreenConfig = async (req, res, io) => {
                             SET "whatsappEnabled" = ${whatsappEnabledValue}
                             WHERE "screenId" = ${String(screenId)}
                         `;
+                        console.log('[ADSCAPE] Updated whatsappEnabled to', whatsappEnabledValue, 'for screen:', screenId);
                     } catch (e) {
                         if (e.code === '42703' || e.message?.includes('does not exist')) {
                             await prisma.$executeRawUnsafe(`ALTER TABLE "AdscapePlayer" ADD COLUMN IF NOT EXISTS "whatsappEnabled" BOOLEAN DEFAULT false`);
                             await prisma.$executeRaw`UPDATE "AdscapePlayer" SET "whatsappEnabled" = ${whatsappEnabledValue} WHERE "screenId" = ${String(screenId)}`;
+                            console.log('[ADSCAPE] Created whatsappEnabled column and set to', whatsappEnabledValue, 'for screen:', screenId);
                         } else throw e;
                     }
                 }
