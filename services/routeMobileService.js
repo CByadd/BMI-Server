@@ -1,24 +1,44 @@
 const axios = require('axios');
 
 /**
- * Route Mobile Bulk SMS Service for OTP
- * Handles OTP generation, sending via Bulk SMS API, and local verification
+ * Route Mobile – SMSPLUS – Bulk HTTP API
+ * Ref: SmsPlus_BulkHttp PDF (Route Mobile Limited, Version 1.0.1, January 2018)
+ *
+ * API URL: http://<server>:8080/bulksms/bulksms?
+ *   username=XXXX&password=YYYYY&type=Y&dlr=Z&destination=QQQQQQQQQ&source=RRRR&message=SSSSSSSS[&url=KKKK]
+ *
+ * All parameters (especially message and url) must be URL-UTF-8 encoded.
+ *
+ * Request Parameters:
+ *   1. username  - HTTP account username
+ *   2. password  - HTTP account password
+ *   3. type      - 0=Plain text GSM 3.38, 1=Flash GSM, 2=Unicode, 3=Reserved, 4=WAP Push, 5=Plain ISO-8859-1, 6=Unicode Flash, 7=Flash ISO-8859-1
+ *   4. dlr       - 0=No delivery report, 1=Delivery report required
+ *   5. destination - Mobile number (may include +; multiple comma-separated, comma URL-encoded)
+ *   6. source    - Sender address (max 18 numeric, max 11 alphanumeric); + prefix URL-encoded if used
+ *   7. message   - Message text (URL-UTF-8 encoded)
+ *   8. url       - For WAP Push (type=4) only; URL-UTF-8 encoded
+ *
+ * Success: 1701|<CELL_NO>|<MESSAGE ID>
+ * Error codes: 1702 Invalid URL, 1703 Invalid username/password, 1704 Invalid type, 1705 Invalid message,
+ *   1706 Invalid destination, 1707 Invalid source, 1708 Invalid dlr, 1709 User validation failed,
+ *   1710 Internal error, 1025 Insufficient credit, 1715 Response timeout, 1032 DND reject, 1028 Spam.
  */
 
-// Get configuration from environment variables
-const SMS_API_BASE_URL = process.env.OTP_API_BASE_URL || 'http://sms6.rmlconnect.net:8080';
-const SMS_USERNAME = process.env.OTP_USERNAME || '';
-const SMS_PASSWORD = process.env.OTP_PASSWORD || '';
-const SMS_SOURCE = process.env.OTP_SOURCE || '';
+// Configuration from environment (per SMSPLUS Bulk HTTP API)
+// Base URL = http://<server>:8080 (e.g. http://sms6.rmlconnect.net:8080)
+const SMS_API_BASE_URL = (process.env.SMS_API_BASE_URL || process.env.OTP_API_BASE_URL || 'http://sms6.rmlconnect.net:8080').replace(/\/$/, '');
+const SMS_USERNAME = process.env.SMS_USERNAME || process.env.OTP_USERNAME || '';
+const SMS_PASSWORD = process.env.SMS_PASSWORD || process.env.OTP_PASSWORD || '';
+const SMS_SOURCE = process.env.SMS_SOURCE || process.env.OTP_SOURCE || '';
 const OTP_LENGTH = parseInt(process.env.OTP_LENGTH || '6', 10);
 const OTP_EXPIRY = parseInt(process.env.OTP_EXPIRY || '300', 10); // Default 5 minutes
 const OTP_MESSAGE_TEMPLATE = process.env.OTP_MESSAGE_TEMPLATE || 'Your OTP is %m. Valid for 5 minutes.';
-// DLT Registration (Required for India commercial SMS)
-const OTP_ENTITY_ID = process.env.OTP_ENTITY_ID || '';
-const OTP_TEMPLATE_ID = process.env.OTP_TEMPLATE_ID || '';
-// Mock OTP Mode (for testing - uses "000000" as OTP without sending SMS)
+// DLT (India) – not in base SMSPLUS spec; add if operator requires
+const OTP_ENTITY_ID = process.env.OTP_ENTITY_ID || process.env.SMS_ENTITY_ID || '';
+const OTP_TEMPLATE_ID = process.env.OTP_TEMPLATE_ID || process.env.SMS_TEMPLATE_ID || '';
 const OTP_MOCK_MODE = process.env.OTP_MOCK_MODE === 'true' || process.env.OTP_MOCK_MODE === '1';
-const MOCK_OTP = '000000'; // Fixed OTP for testing
+const MOCK_OTP = '000000';
 
 // In-memory OTP store: mobile -> { otp, expiresAt, attempts }
 const otpStore = new Map();
@@ -536,16 +556,36 @@ async function validateOTP(msisdn, otp) {
   }
 }
 
+// SMSPLUS Bulk HTTP API error codes (from doc)
+const BULK_SMS_ERROR_MESSAGES = {
+  '1702': 'Invalid URL. One of the parameters was not provided or left blank.',
+  '1703': 'Invalid value in username or password parameter.',
+  '1704': 'Invalid value in type parameter.',
+  '1705': 'Invalid message.',
+  '1706': 'Invalid destination.',
+  '1707': 'Invalid source (Sender).',
+  '1708': 'Invalid value in dlr parameter.',
+  '1709': 'User validation failed.',
+  '1710': 'Internal error.',
+  '1025': 'Insufficient credit.',
+  '1715': 'Response timeout. Do NOT re-submit the same message.',
+  '1032': 'DND reject.',
+  '1028': 'Spam message.'
+};
+
 /**
- * Send a single bulk SMS via Route Mobile HTTP API
- * API: http://<server>:8080/bulksms/bulksms?username=...&password=...&type=Y&dlr=Z&destination=...&source=...&message=...&url=... (url only for WAP Push type=4)
+ * Send a single bulk SMS via Route Mobile SMSPLUS Bulk HTTP API
+ * API: http://<server>:8080/bulksms/bulksms?username=...&password=...&type=Y&dlr=Z&destination=...&source=...&message=...
+ * All parameters (message, url) must be URL-UTF-8 encoded.
+ * Success response: 1701|<CELL_NO>|<MESSAGE ID>
+ *
  * @param {Object} opts
- * @param {string} opts.destination - Mobile number (10 digits or with country code)
- * @param {string} opts.message - Message text (will be URL UTF-8 encoded)
- * @param {number} [opts.type=0] - 0=Plain GSM, 1=Flash GSM, 2=Unicode, 4=WAP Push, 5=ISO-8859-1, 6=Unicode Flash, 7=Flash ISO-8859-1
+ * @param {string} opts.destination - Mobile number (10 digits or with country code; doc: may include +)
+ * @param {string} opts.message - Message text (URL-UTF-8 encoded per doc)
+ * @param {number} [opts.type=0] - 0=Plain GSM 3.38, 1=Flash, 2=Unicode, 4=WAP Push, 5=Plain ISO-8859-1, 6=Unicode Flash, 7=Flash ISO-8859-1
  * @param {number} [opts.dlr=0] - 0=No delivery report, 1=Delivery report required
- * @param {string} [opts.source] - Sender ID (defaults to OTP_SOURCE env)
- * @param {string} [opts.url] - For WAP Push (type=4) only; link to send
+ * @param {string} [opts.source] - Sender ID (max 18 numeric, max 11 alphanumeric)
+ * @param {string} [opts.url] - For WAP Push (type=4) only; URL-UTF-8 encoded
  * @returns {Promise<{success: boolean, messageId?: string, error?: string, errorCode?: string}>}
  */
 async function sendBulkSms(opts) {
@@ -560,23 +600,26 @@ async function sendBulkSms(opts) {
 
   try {
     if (!SMS_API_BASE_URL || !SMS_USERNAME || !SMS_PASSWORD || !source) {
-      console.error('[BULK_SMS] Missing SMS API configuration');
+      console.error('[BULK_SMS] Missing SMS API configuration (per SMSPLUS doc: username, password, source required)');
       return { success: false, error: 'SMS service not configured', errorCode: 'CONFIG_ERROR' };
     }
     const dest = normalizeMobileNumber(String(destination || ''));
     if (dest.length !== 10) {
       return { success: false, error: 'Invalid destination. Must be 10 digits.', errorCode: 'INVALID_MSISDN' };
     }
+    // Destination: with country code 91; optional + prefix per doc (URL-encoded as %2B)
     const destinationWithCountryCode = `91${dest}`;
+    const destinationParam = process.env.SMS_DESTINATION_WITH_PLUS === 'true' ? `%2B${destinationWithCountryCode}` : destinationWithCountryCode;
+    // Message: URL-UTF-8 encoded per doc
     const encodedMessage = encodeURIComponent(message || '');
-    const baseUrl = SMS_API_BASE_URL.replace(/\/$/, '');
-    const apiUrl = `${baseUrl}/bulksms/bulksms`;
+    const apiPath = '/bulksms/bulksms';
+    const apiUrl = `${SMS_API_BASE_URL}${apiPath}`;
     const queryParams = [
       `username=${encodeURIComponent(SMS_USERNAME)}`,
       `password=${encodeURIComponent(SMS_PASSWORD)}`,
       `type=${Number(type)}`,
       `dlr=${Number(dlr)}`,
-      `destination=${destinationWithCountryCode}`,
+      `destination=${destinationParam}`,
       `source=${encodeURIComponent(source)}`,
       `message=${encodedMessage}`
     ];
@@ -588,7 +631,7 @@ async function sendBulkSms(opts) {
       queryParams.push(`tempid=${OTP_TEMPLATE_ID}`);
     }
     const fullUrl = `${apiUrl}?${queryParams.join('&')}`;
-    console.log('[BULK_SMS] Sending:', { destination: dest, type, dlr, messageLength: (message || '').length });
+    console.log('[BULK_SMS] Sending (SMSPLUS Bulk HTTP):', { destination: dest, type, dlr, messageLength: (message || '').length });
     const response = await axios.get(fullUrl, {
       timeout: 30000,
       headers: { 'Accept': '*/*', 'User-Agent': 'Node.js/BulkSMS' },
@@ -598,14 +641,15 @@ async function sendBulkSms(opts) {
     const responseText = (response.data?.toString() || response.data || '').trim();
     if (responseText.startsWith('1701|')) {
       const parts = responseText.split('|');
-      const cellNoAndMsgId = (parts[1] || '');
-      const messageId = cellNoAndMsgId.includes(':') ? cellNoAndMsgId.split(':').slice(1).join(':') : (parts[2] || '');
-      console.log('[BULK_SMS] Sent successfully:', { destination: dest, messageId });
-      return { success: true, messageId };
+      const cellNo = (parts[1] || '').trim();
+      const messageId = (parts[2] || '').trim() || (cellNo.includes(':') ? cellNo.split(':').slice(1).join(':') : '');
+      console.log('[BULK_SMS] Success 1701:', { destination: dest, cellNo, messageId });
+      return { success: true, messageId: messageId || cellNo };
     }
-    const errorCode = responseText.split('|')[0] || responseText.trim();
-    console.error('[BULK_SMS] API error:', { errorCode, response: responseText });
-    return { success: false, error: `SMS API error: ${errorCode}`, errorCode, rawResponse: responseText };
+    const errorCode = String(responseText.split('|')[0] || responseText.trim());
+    const errorMessage = BULK_SMS_ERROR_MESSAGES[errorCode] || `SMS API error: ${errorCode}`;
+    console.error('[BULK_SMS] API error:', { errorCode, errorMessage, rawResponse: responseText });
+    return { success: false, error: errorMessage, errorCode, rawResponse: responseText };
   } catch (err) {
     console.error('[BULK_SMS] sendBulkSms error:', err.message);
     return {
