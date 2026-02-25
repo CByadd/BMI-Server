@@ -9,14 +9,14 @@ exports.getDashboardStats = async (req, res) => {
     const totalBillboards = await prisma.$queryRaw`
       SELECT COUNT(*)::int as count FROM billboards
     `;
-    
+
     // Get billboard status counts
     const billboardStatus = await prisma.$queryRaw`
       SELECT status, COUNT(*)::int as count 
       FROM billboards 
       GROUP BY status
     `;
-    
+
     const statusCounts = {
       active: 0,
       maintenance: 0,
@@ -25,7 +25,7 @@ exports.getDashboardStats = async (req, res) => {
       approved: 0,
       rejected: 0
     };
-    
+
     billboardStatus.forEach(status => {
       if (status.status) {
         const statusKey = (status.status || '').toLowerCase();
@@ -34,26 +34,26 @@ exports.getDashboardStats = async (req, res) => {
         }
       }
     });
-    
+
     // Get total publishers
     const totalPublishers = await prisma.$queryRaw`
       SELECT COUNT(*)::int as count 
       FROM publishers 
       WHERE status = 'active'
     `;
-    
+
     // Get total bookings (campaigns)
     const totalBookings = await prisma.$queryRaw`
       SELECT COUNT(*)::int as count FROM campaigns
     `;
-    
+
     // Calculate total revenue from campaigns
     const revenueResult = await prisma.$queryRaw`
       SELECT COALESCE(SUM(total_amount::numeric), 0) as total
       FROM campaigns
     `;
     const totalRevenue = parseFloat(revenueResult[0]?.total || 0);
-    
+
     // Get recent activity data
     const recentCampaigns = await prisma.$queryRaw`
       SELECT id, campaign_name, status, total_amount, created_at, user_name
@@ -61,7 +61,7 @@ exports.getDashboardStats = async (req, res) => {
       ORDER BY created_at DESC
       LIMIT 5
     `;
-    
+
     const recentActivity = recentCampaigns.map(campaign => ({
       id: campaign.id,
       type: 'campaign',
@@ -71,31 +71,31 @@ exports.getDashboardStats = async (req, res) => {
       status: campaign.status,
       timestamp: campaign.created_at
     }));
-    
+
     // Get revenue data for charts (last 12 months)
     const revenueData = [];
     const currentDate = new Date();
-    
+
     for (let i = 11; i >= 0; i--) {
       const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
       const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
       const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-      
+
       const monthRevenueResult = await prisma.$queryRaw`
         SELECT COALESCE(SUM(total_amount::numeric), 0) as total
         FROM campaigns
         WHERE created_at >= ${monthStart}
         AND created_at <= ${monthEnd}
       `;
-      
+
       const monthRevenue = parseFloat(monthRevenueResult[0]?.total || 0);
-      
+
       revenueData.push({
         month: date.toLocaleDateString('en-US', { month: 'short' }),
         amount: monthRevenue
       });
     }
-    
+
     res.json({
       totalBillboards: totalBillboards[0]?.count || 0,
       totalPublishers: totalPublishers[0]?.count || 0,
@@ -122,7 +122,7 @@ exports.getTopPerformers = async (req, res) => {
       ORDER BY price_per_day DESC
       LIMIT 10
     `;
-    
+
     const performers = topBillboards.map(billboard => ({
       id: billboard.id,
       name: billboard.name || 'Unnamed Billboard',
@@ -130,7 +130,7 @@ exports.getTopPerformers = async (req, res) => {
       revenue: (billboard.price_per_day || 0) * 30, // Monthly revenue estimate
       growth: Math.floor(Math.random() * 20) + 1 // Random growth for demo
     }));
-    
+
     res.json({ items: performers });
   } catch (error) {
     console.error('Error fetching top performers:', error);
@@ -142,12 +142,12 @@ exports.getTopPerformers = async (req, res) => {
 exports.getBMIStats = async (req, res) => {
   try {
     const screenFilter = getScreenFilter(req.user);
-    
+
     // Get total BMI records (filtered by screen)
     const totalBMIRecords = await prisma.bMI.count({
       where: screenFilter
     });
-    
+
     // Get total unique users (filtered by screen)
     const uniqueUserIds = await prisma.bMI.findMany({
       where: screenFilter,
@@ -155,13 +155,13 @@ exports.getBMIStats = async (req, res) => {
       distinct: ['userId']
     });
     const totalUsers = uniqueUserIds.filter(u => u.userId !== null).length;
-    
+
     // Get daily users (users who checked BMI today, filtered by screen)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayEnd = new Date(today);
     todayEnd.setHours(23, 59, 59, 999);
-    
+
     const dailyUsers = await prisma.bMI.count({
       where: {
         ...screenFilter,
@@ -171,16 +171,16 @@ exports.getBMIStats = async (req, res) => {
         }
       }
     });
-    
+
     // Get total screens (filtered by role)
-    const screenWhere = req.user.role === 'super_admin' 
+    const screenWhere = req.user.role === 'super_admin'
       ? { isActive: true }
       : { isActive: true, screenId: { in: req.user.assignedScreenIds } };
-    
+
     const totalScreens = await prisma.adscapePlayer.count({
       where: screenWhere
     });
-    
+
     // Get active screens (online - seen within last 5 minutes, filtered by role)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
     const activeScreens = await prisma.adscapePlayer.count({
@@ -191,7 +191,7 @@ exports.getBMIStats = async (req, res) => {
         }
       }
     });
-    
+
     res.json({
       totalUsers: totalBMIRecords,
       totalUniqueUsers: totalUsers,
@@ -205,21 +205,22 @@ exports.getBMIStats = async (req, res) => {
   }
 };
 
-// GET user activity data for charts (last 7 days)
+// GET user activity data for charts (supports ?days=7|30|90)
 exports.getUserActivity = async (req, res) => {
   try {
     const screenFilter = getScreenFilter(req.user);
+    const daysCount = Math.min(parseInt(req.query.days) || 7, 365); // cap at 365
     const data = [];
     const today = new Date();
-    
-    for (let i = 6; i >= 0; i--) {
+
+    for (let i = daysCount - 1; i >= 0; i--) {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       date.setHours(0, 0, 0, 0);
-      
+
       const nextDate = new Date(date);
       nextDate.setDate(nextDate.getDate() + 1);
-      
+
       const count = await prisma.bMI.count({
         where: {
           ...screenFilter,
@@ -229,14 +230,21 @@ exports.getUserActivity = async (req, res) => {
           }
         }
       });
-      
-      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      data.push({
-        name: dayNames[date.getDay()],
-        users: count
-      });
+
+      // For 7 days use day abbreviations; for longer ranges use MM/DD
+      let label;
+      if (daysCount <= 7) {
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        label = dayNames[date.getDay()];
+      } else {
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
+        label = `${month}/${day}`;
+      }
+
+      data.push({ name: label, users: count });
     }
-    
+
     res.json({ data });
   } catch (error) {
     console.error('Error fetching user activity:', error);
@@ -248,29 +256,29 @@ exports.getUserActivity = async (req, res) => {
 exports.getWeightClassification = async (req, res) => {
   try {
     const screenFilter = getScreenFilter(req.user);
-    
+
     // Build WHERE clause for screen filter
     let whereClause = '';
     if (req.user.role !== 'super_admin' && req.user.assignedScreenIds.length > 0) {
       const screenIds = req.user.assignedScreenIds.map(id => `'${id}'`).join(',');
       whereClause = `WHERE "screenId" IN (${screenIds})`;
     }
-    
+
     const classifications = await prisma.$queryRawUnsafe(`
       SELECT category, COUNT(*)::int as count
       FROM "BMI"
       ${whereClause}
       GROUP BY category
     `);
-    
+
     const total = classifications.reduce((sum, item) => sum + item.count, 0);
-    
+
     const data = classifications.map(item => ({
       name: item.category,
       value: total > 0 ? Math.round((item.count / total) * 100) : 0,
       count: item.count
     }));
-    
+
     res.json({ data });
   } catch (error) {
     console.error('Error fetching weight classification:', error);
@@ -282,10 +290,10 @@ exports.getWeightClassification = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const screenFilter = getScreenFilter(req.user);
-    
+
     // Get unique user IDs from BMI records that match the screen filter
     let userIds = [];
-    
+
     if (req.user.role === 'super_admin') {
       // Super admin sees all users
       const allUsers = await prisma.user.findMany({
@@ -304,7 +312,7 @@ exports.getAllUsers = async (req, res) => {
       });
       userIds = bmiRecords.map(b => b.userId).filter(id => id !== null);
     }
-    
+
     // Get users with their BMI data
     const users = await prisma.user.findMany({
       where: {
@@ -326,7 +334,7 @@ exports.getAllUsers = async (req, res) => {
       },
       orderBy: { createdAt: 'desc' }
     });
-    
+
     // Format response
     const formattedUsers = users.map(user => ({
       id: user.id,
@@ -341,7 +349,7 @@ exports.getAllUsers = async (req, res) => {
         screenId: user.bmiData[0].screenId
       } : null
     }));
-    
+
     res.json({
       ok: true,
       users: formattedUsers,
@@ -358,26 +366,26 @@ exports.getScreenBMIRecords = async (req, res) => {
   try {
     console.log('[ADMIN] getScreenBMIRecords called:', req.params, req.query);
     const { screenId } = req.params;
-    
+
     if (!screenId) {
       return res.status(400).json({ error: 'screenId is required' });
     }
-    
+
     // Check if user has access to this screen
     if (req.user.role !== 'super_admin' && !req.user.assignedScreenIds.includes(screenId)) {
       return res.status(403).json({ error: 'Access denied to this screen' });
     }
-    
+
     // Get date filter from query params
     const { dateFilter = 'all', startDate, endDate } = req.query;
-    
+
     // Date filter is no longer used for the main query
     // but we'll keep it for the today's stats calculation
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayEnd = new Date(today);
     todayEnd.setHours(23, 59, 59, 999);
-    
+
     // Build date filter for where clause
     const dateFilterObj = {};
     if (startDate || endDate) {
@@ -393,18 +401,18 @@ exports.getScreenBMIRecords = async (req, res) => {
         dateFilterObj.timestamp.lte = end;
       }
     }
-    
+
     // Get pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
-    
+
     // Build where clause
     const whereClause = {
       screenId: String(screenId),
       ...dateFilterObj
     };
-    
+
     // Get BMI records for this screen with pagination
     const [bmiRecords, totalCount] = await Promise.all([
       prisma.bMI.findMany({
@@ -428,7 +436,7 @@ exports.getScreenBMIRecords = async (req, res) => {
         where: whereClause
       })
     ]);
-    
+
     // Format response
     const formattedRecords = bmiRecords.map(record => ({
       id: record.id,
@@ -444,10 +452,10 @@ exports.getScreenBMIRecords = async (req, res) => {
       paymentStatus: record.paymentStatus || false,
       paymentAmount: record.paymentAmount || null
     }));
-    
+
     // Calculate stats
     // Today's stats are still calculated using the date filter
-    
+
     const todayRecords = await prisma.bMI.count({
       where: {
         screenId: String(screenId),
@@ -457,13 +465,13 @@ exports.getScreenBMIRecords = async (req, res) => {
         }
       }
     });
-    
+
     const totalRecords = await prisma.bMI.count({
       where: {
         screenId: String(screenId)
       }
     });
-    
+
     const avgBMIResult = await prisma.bMI.aggregate({
       where: {
         screenId: String(screenId),
@@ -476,7 +484,7 @@ exports.getScreenBMIRecords = async (req, res) => {
         bmi: true
       }
     });
-    
+
     res.json({
       ok: true,
       records: formattedRecords,

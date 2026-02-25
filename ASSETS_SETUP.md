@@ -43,4 +43,4 @@ Screen logos and flow-drawer images are saved under `ASSETS_DIR/images/` with na
 
 ## Default / Placeholder Logo
 
-Place your app logo at `/var/www/assets/images/logo.png` so that `https://api.well2day.in/assets/images/logo.png` works for the client and admin. You can also set `DEFAULT_ASSET_URL` in `.env` to any fallback image URL.
+Place your app logo at `/var/www/assets/images/logo.png` so that `https://well2day.in/assets/img/Group%202325.png` works for the client and admin. You can also set `DEFAULT_ASSET_URL` in `.env` to any fallback image URL.
