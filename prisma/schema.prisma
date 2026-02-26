@@ -110,6 +110,8 @@ model AdminScreenAssignment {
   screenId        String    @db.VarChar(64)
   messageLimit    Int?      // Message (SMS) limit allocated to this screen by the admin (sum across screens <= admin totalMessageLimit)
   whatsappLimit   Int?      // WhatsApp message limit allocated to this screen by the admin (sum across screens <= admin totalWhatsAppLimit)
+  smsEnabled      Boolean   @default(true)
+  whatsappEnabled Boolean   @default(true)
   createdAt       DateTime  @default(now())
 
   @@unique([adminId, screenId])

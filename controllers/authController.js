@@ -51,6 +51,18 @@ async function getWhatsAppLimitColumnsExist() {
   return _whatsappLimitColumnsExist;
 }
 
+let _toggleColumnsExist = null;
+async function getTogglesColumnsExist() {
+  if (_toggleColumnsExist !== null) return _toggleColumnsExist;
+  try {
+    await prisma.$queryRaw`SELECT "smsEnabled", "whatsappEnabled" FROM "AdminScreenAssignment" LIMIT 0`;
+    _toggleColumnsExist = true;
+  } catch {
+    _toggleColumnsExist = false;
+  }
+  return _toggleColumnsExist;
+}
+
 async function getAdminMessageLimitMaps() {
   const exist = await getMessageLimitColumnsExist();
   if (!exist) {
@@ -65,14 +77,14 @@ async function getAdminMessageLimitMaps() {
     } catch (_) {
       usageColumnsExist = false;
     }
-    
+
     let adminRows;
     if (usageColumnsExist) {
       adminRows = await prisma.$queryRaw`SELECT id, "totalMessageLimit", COALESCE("smsUsedCount", 0) as "smsUsedCount" FROM "AdminUser"`;
     } else {
       adminRows = await prisma.$queryRaw`SELECT id, "totalMessageLimit" FROM "AdminUser"`;
     }
-    
+
     const assignmentRows = await prisma.$queryRaw`SELECT "adminId", "screenId", "messageLimit" FROM "AdminScreenAssignment"`;
     const adminTotal = new Map(adminRows.map((r) => [r.id, r.totalMessageLimit ?? null]));
     const adminUsed = new Map(adminRows.map((r) => [r.id, usageColumnsExist && r.smsUsedCount != null ? Number(r.smsUsedCount) || 0 : 0]));
@@ -101,14 +113,14 @@ async function getAdminWhatsAppLimitMaps() {
     } catch (_) {
       usageColumnsExist = false;
     }
-    
+
     let adminRows;
     if (usageColumnsExist) {
       adminRows = await prisma.$queryRaw`SELECT id, "totalWhatsAppLimit", COALESCE("whatsappUsedCount", 0) as "whatsappUsedCount" FROM "AdminUser"`;
     } else {
       adminRows = await prisma.$queryRaw`SELECT id, "totalWhatsAppLimit" FROM "AdminUser"`;
     }
-    
+
     const assignmentRows = await prisma.$queryRaw`SELECT "adminId", "screenId", "whatsappLimit" FROM "AdminScreenAssignment"`;
     const adminTotal = new Map(adminRows.map((r) => [r.id, r.totalWhatsAppLimit ?? null]));
     const adminUsed = new Map(adminRows.map((r) => [r.id, usageColumnsExist && r.whatsappUsedCount != null ? Number(r.whatsappUsedCount) || 0 : 0]));
@@ -137,13 +149,27 @@ function mergeMessageLimitsIntoAdmin(adminData, adminId, { adminTotal, adminUsed
 async function mergeWhatsAppLimitsIntoAdmin(adminData, adminId, { adminTotal, adminUsed, assignmentLimits }) {
   adminData.totalWhatsAppLimit = adminTotal.has(adminId) ? adminTotal.get(adminId) : null;
   adminData.whatsappUsedCount = adminUsed.has(adminId) ? adminUsed.get(adminId) : 0;
+
   const screenMap = assignmentLimits.get(adminId);
   if (!adminData.screenLimits) {
     adminData.screenLimits = (adminData.assignedScreenIds || []).map((screenId) => ({ screenId, messageLimit: null, whatsappLimit: null }));
   }
+
+  // also get toggle states
+  const togglesExist = await getTogglesColumnsExist();
+  let toggleRows = [];
+  if (togglesExist) {
+    try {
+      toggleRows = await prisma.$queryRaw`SELECT "screenId", "smsEnabled", "whatsappEnabled" FROM "AdminScreenAssignment" WHERE "adminId" = CAST(${adminId} AS uuid)`;
+    } catch (_) { }
+  }
+  const toggleMap = new Map(toggleRows.map(r => [r.screenId, { smsEnabled: r.smsEnabled, whatsappEnabled: r.whatsappEnabled }]));
+
   adminData.screenLimits = adminData.screenLimits.map((s) => ({
     ...s,
     whatsappLimit: screenMap && screenMap.has(s.screenId) ? screenMap.get(s.screenId) : null,
+    smsEnabled: toggleMap.has(s.screenId) ? toggleMap.get(s.screenId).smsEnabled : true,
+    whatsappEnabled: toggleMap.has(s.screenId) ? toggleMap.get(s.screenId).whatsappEnabled : true,
   }));
   return adminData;
 }
@@ -318,8 +344,19 @@ exports.registerAdmin = async (req, res) => {
           return !isNaN(n) && n >= 0 ? n : null;
         };
         for (const s of req.body.screenLimits) {
-          limitsMap[String(s.screenId)] = parseLimit(s.messageLimit);
-          whatsappLimitsMap[String(s.screenId)] = parseLimit(s.whatsappLimit);
+          const sid = String(s.screenId);
+          limitsMap[sid] = parseLimit(s.messageLimit);
+          whatsappLimitsMap[sid] = parseLimit(s.whatsappLimit);
+          if (s.smsEnabled !== undefined) {
+            if (!togglesMap) togglesMap = {};
+            if (!togglesMap[sid]) togglesMap[sid] = {};
+            togglesMap[sid].smsEnabled = Boolean(s.smsEnabled);
+          }
+          if (s.whatsappEnabled !== undefined) {
+            if (!togglesMap) togglesMap = {};
+            if (!togglesMap[sid]) togglesMap[sid] = {};
+            togglesMap[sid].whatsappEnabled = Boolean(s.whatsappEnabled);
+          }
         }
       }
       const msgExist = await getMessageLimitColumnsExist();
@@ -337,6 +374,20 @@ exports.registerAdmin = async (req, res) => {
           const lim = whatsappLimitsMap[String(screenId)];
           if (lim !== undefined) {
             await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "whatsappLimit" = ${lim} WHERE "adminId" = CAST(${newAdmin.id} AS uuid) AND "screenId" = ${String(screenId)}`;
+          }
+        }
+      }
+      const togglesExist = await getTogglesColumnsExist();
+      if (togglesExist && togglesMap && Object.keys(togglesMap).length > 0) {
+        for (const screenId of screenIds) {
+          const sid = String(screenId);
+          if (togglesMap[sid]) {
+            if (togglesMap[sid].smsEnabled !== undefined) {
+              await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "smsEnabled" = ${togglesMap[sid].smsEnabled} WHERE "adminId" = CAST(${newAdmin.id} AS uuid) AND "screenId" = ${sid}`;
+            }
+            if (togglesMap[sid].whatsappEnabled !== undefined) {
+              await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "whatsappEnabled" = ${togglesMap[sid].whatsappEnabled} WHERE "adminId" = CAST(${newAdmin.id} AS uuid) AND "screenId" = ${sid}`;
+            }
           }
         }
       }
@@ -460,6 +511,9 @@ exports.updateAdmin = async (req, res) => {
       const whatsappLimitsMap = Array.isArray(screenLimits)
         ? Object.fromEntries(screenLimits.map((s) => [String(s.screenId), parseLimit(s.whatsappLimit)]))
         : {};
+      const togglesMap = Array.isArray(screenLimits)
+        ? Object.fromEntries(screenLimits.map((s) => [String(s.screenId), { smsEnabled: s.smsEnabled, whatsappEnabled: s.whatsappEnabled }]))
+        : {};
 
       await prisma.adminScreenAssignment.deleteMany({
         where: { adminId: id },
@@ -485,6 +539,21 @@ exports.updateAdmin = async (req, res) => {
           for (const screenId of screenIds) {
             const lim = whatsappLimitsMap[String(screenId)] ?? null;
             await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "whatsappLimit" = ${lim} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${String(screenId)}`;
+          }
+        }
+        const togglesExist = await getTogglesColumnsExist();
+        if (togglesExist) {
+          for (const screenId of screenIds) {
+            const sid = String(screenId);
+            const t = togglesMap[sid];
+            if (t) {
+              if (t.smsEnabled !== undefined) {
+                await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "smsEnabled" = ${Boolean(t.smsEnabled)} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${sid}`;
+              }
+              if (t.whatsappEnabled !== undefined) {
+                await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "whatsappEnabled" = ${Boolean(t.whatsappEnabled)} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${sid}`;
+              }
+            }
           }
         }
       }
@@ -617,7 +686,7 @@ exports.getAdminScreens = async (req, res) => {
           const s = screens.find((x) => x.screenId === r.screenId);
           if (s) s.messageLimit = r.messageLimit ?? null;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     const waExist = await getWhatsAppLimitColumnsExist();
     if (waExist) {
@@ -628,7 +697,7 @@ exports.getAdminScreens = async (req, res) => {
           const s = screens.find((x) => x.screenId === r.screenId);
           if (s) s.whatsappLimit = r.whatsappLimit ?? null;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     res.json({
@@ -676,20 +745,21 @@ exports.setAdminScreenLimits = async (req, res) => {
       try {
         const [row] = await prisma.$queryRaw`SELECT "totalMessageLimit" FROM "AdminUser" WHERE id = CAST(${id} AS uuid)`;
         if (row && row.totalMessageLimit != null) totalMsgLimit = Number(row.totalMessageLimit);
-      } catch (_) {}
+      } catch (_) { }
     }
     const waExist = await getWhatsAppLimitColumnsExist();
     if (waExist) {
       try {
         const [row] = await prisma.$queryRaw`SELECT "totalWhatsAppLimit" FROM "AdminUser" WHERE id = CAST(${id} AS uuid)`;
         if (row && row.totalWhatsAppLimit != null) totalWaLimit = Number(row.totalWhatsAppLimit);
-      } catch (_) {}
+      } catch (_) { }
     }
 
     let msgSum = 0;
     let waSum = 0;
     const msgUpdates = [];
     const waUpdates = [];
+    const toggleUpdates = [];
     for (const item of screenLimits) {
       const screenId = String(item.screenId);
       if (!assignedScreenIds.includes(screenId)) {
@@ -710,6 +780,13 @@ exports.setAdminScreenLimits = async (req, res) => {
         }
         waSum += limit ?? 0;
         waUpdates.push({ screenId, whatsappLimit: limit });
+      }
+      if (item.smsEnabled !== undefined || item.whatsappEnabled !== undefined) {
+        toggleUpdates.push({
+          screenId,
+          smsEnabled: item.smsEnabled !== undefined ? Boolean(item.smsEnabled) : undefined,
+          whatsappEnabled: item.whatsappEnabled !== undefined ? Boolean(item.whatsappEnabled) : undefined
+        });
       }
     }
 
@@ -732,6 +809,17 @@ exports.setAdminScreenLimits = async (req, res) => {
     if (waExist && waUpdates.length > 0) {
       for (const { screenId, whatsappLimit } of waUpdates) {
         await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "whatsappLimit" = ${whatsappLimit} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${screenId}`;
+      }
+    }
+    const togglesExist = await getTogglesColumnsExist();
+    if (togglesExist && toggleUpdates.length > 0) {
+      for (const { screenId, smsEnabled, whatsappEnabled } of toggleUpdates) {
+        if (smsEnabled !== undefined) {
+          await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "smsEnabled" = ${smsEnabled} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${screenId}`;
+        }
+        if (whatsappEnabled !== undefined) {
+          await prisma.$executeRaw`UPDATE "AdminScreenAssignment" SET "whatsappEnabled" = ${whatsappEnabled} WHERE "adminId" = CAST(${id} AS uuid) AND "screenId" = ${screenId}`;
+        }
       }
     }
 
@@ -774,7 +862,7 @@ exports.resetAdminUsage = async (req, res) => {
     try {
       await prisma.$executeRawUnsafe(`ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "smsUsedCount" INTEGER DEFAULT 0`);
       await prisma.$executeRawUnsafe(`ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "whatsappUsedCount" INTEGER DEFAULT 0`);
-    } catch (_) {}
+    } catch (_) { }
 
     if (resetSmsUsage === true) {
       await prisma.$executeRaw`UPDATE "AdminUser" SET "smsUsedCount" = 0 WHERE id = CAST(${id} AS uuid)`;
