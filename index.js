@@ -11,36 +11,36 @@ const axios = require('axios');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-	cors: {
-		origin: [
-			'http://localhost:5173',
-			'http://localhost:5174',
-			'http://localhost:3000',
-			'http://localhost:8080',
-			'https://bmi-client.vercel.app',
-			'https://bmi-client.onrender.com',
-			'https://adscape.co.in',
-			'https://admin.adscape.co.in',
-			'https://billboard-admin-x.vercel.app',
-			'http://127.0.0.1:5500',
+    cors: {
+        origin: [
+            'http://localhost:5173',
+            'http://localhost:5174',
+            'http://localhost:3000',
+            'http://localhost:8080',
+            'https://bmi-client.vercel.app',
+            'https://bmi-client.onrender.com',
+            'https://adscape.co.in',
+            'https://admin.adscape.co.in',
+            'https://billboard-admin-x.vercel.app',
+            'http://127.0.0.1:5500',
             'https://bmi-client.onrender.com',
             'https://bmi-admin-pi.vercel.app',
-             'http://4.240.88.83',
-             'https://api.well2day.in',
-             'https://app.well2day.in',
-             'https://admin.well2day.in'
+            'http://4.240.88.83',
+            'https://api.well2day.in',
+            'https://app.well2day.in',
+            'https://admin.well2day.in'
 
-			
-		],
-		methods: ['GET', 'POST'],
-		allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
-		credentials: true
-	}
+
+        ],
+        methods: ['GET', 'POST'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
+        credentials: true
+    }
 });
 // Prisma - use shared instance
 const prisma = require('./db');
 
-// Enhanced CORS configuration - handle all origins properly
+// Enhanced CORS configuration
 const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
@@ -54,7 +54,6 @@ const allowedOrigins = [
     'https://admin.adscape.co.in',
     'https://billboard-admin-x.vercel.app',
     'http://127.0.0.1:5500',
-    'https://bmi-client.onrender.com',
     'https://bmi-admin-pi.vercel.app',
     'http://4.240.88.83',
     'https://api.well2day.in',
@@ -62,87 +61,27 @@ const allowedOrigins = [
     'https://admin.well2day.in',
 ];
 
-// CORS middleware with proper OPTIONS handling
-app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    
-    // Log CORS request for debugging
-    if (req.method === 'OPTIONS' || origin) {
-        console.log(`[CORS] ${req.method} ${req.url} - Origin: ${origin || 'none'}`);
-    }
-    
-    // Handle OPTIONS preflight requests immediately
-    if (req.method === 'OPTIONS') {
-        console.log('[CORS] Handling OPTIONS preflight request');
-        
-        // Allow any localhost origin for development
-        if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
-            res.header('Access-Control-Allow-Origin', origin);
-            console.log(`[CORS] Allowing localhost origin: ${origin}`);
-        } else if (origin && allowedOrigins.includes(origin)) {
-            res.header('Access-Control-Allow-Origin', origin);
-        } else if (origin) {
-            // For development, allow the origin if it's in the list
-            res.header('Access-Control-Allow-Origin', origin);
-            console.log(`[CORS] Allowing origin: ${origin}`);
-        } else {
-            // No origin header - allow all for development
-            res.header('Access-Control-Allow-Origin', '*');
-        }
-        
-        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, X-Requested-With');
-        res.header('Access-Control-Allow-Credentials', 'true');
-        res.header('Access-Control-Max-Age', '86400'); // 24 hours
-        return res.sendStatus(200);
-    }
-    
-    // Handle actual requests
-    if (origin) {
-        // Allow any localhost origin for development
-        if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-            res.header('Access-Control-Allow-Origin', origin);
-        } else if (allowedOrigins.includes(origin)) {
-            res.header('Access-Control-Allow-Origin', origin);
-        } else {
-            // For development, allow the origin
-            res.header('Access-Control-Allow-Origin', origin);
-            console.log(`[CORS] Allowing origin: ${origin}`);
-        }
-    }
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, X-Requested-With');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    
-    next();
-});
-
-// Also use cors package as additional layer
 app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin) {
-            return callback(null, true);
-        }
-        
-        // Allow any localhost origin for development
+        // Allow requests with no origin (like mobile apps)
+        if (!origin) return callback(null, true);
+
+        // Allow any localhost origin
         if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-            console.log(`[CORS] cors() package allowing localhost origin: ${origin}`);
             return callback(null, true);
         }
-        
+
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
-            console.log(`[CORS] cors() package rejected origin: ${origin}`);
-            // For development, allow anyway
+            // For development, log but allow
+            console.log(`[CORS] Origin not in list but allowed in dev: ${origin}`);
             callback(null, true);
         }
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'X-Requested-With'],
-    preflightContinue: false,
     optionsSuccessStatus: 200
 }));
 
@@ -151,8 +90,8 @@ app.use(express.json());
 app.use((req, _res, next) => {
     console.log(`[HTTP] ${req.method} ${req.url}`);
     if (req.method !== 'GET') {
-        try { 
-            console.log('[HTTP] body:', JSON.stringify(req.body)); 
+        try {
+            console.log('[HTTP] body:', JSON.stringify(req.body));
             console.log('[HTTP] body type:', typeof req.body);
             console.log('[HTTP] body length:', req.body ? Object.keys(req.body).length : 'null');
         } catch (e) {
@@ -195,7 +134,7 @@ io.on('connection', (socket) => {
     console.log('[SOCKET] Total connected sockets:', io.sockets.sockets.size);
 
     socket.on('player-join', (data) => {
-		try {
+        try {
             const screenId = String(data?.screenId || '');
             console.log('═══════════════════════════════════════════════════════════════');
             console.log('[SOCKET] 🔔🔔🔔 PLAYER-JOIN EVENT RECEIVED 🔔🔔🔔');
@@ -203,28 +142,28 @@ io.on('connection', (socket) => {
             console.log('[SOCKET] Screen ID:', screenId);
             console.log('[SOCKET] Data:', JSON.stringify(data));
             console.log('═══════════════════════════════════════════════════════════════');
-            
-			if (screenId) {
-				const roomName = `screen:${screenId}`;
-				
-				// Leave any previous rooms this socket might be in (except its own socket room)
-				const currentRooms = Array.from(socket.rooms).filter(room => room !== socket.id);
-				if (currentRooms.length > 0) {
-					currentRooms.forEach(room => socket.leave(room));
-					console.log(`[SOCKET] Left previous rooms: ${currentRooms.join(", ")}`);
-				}
-				
-				socket.join(roomName);
+
+            if (screenId) {
+                const roomName = `screen:${screenId}`;
+
+                // Leave any previous rooms this socket might be in (except its own socket room)
+                const currentRooms = Array.from(socket.rooms).filter(room => room !== socket.id);
+                if (currentRooms.length > 0) {
+                    currentRooms.forEach(room => socket.leave(room));
+                    console.log(`[SOCKET] Left previous rooms: ${currentRooms.join(", ")}`);
+                }
+
+                socket.join(roomName);
                 const room = io.sockets.adapter.rooms.get(roomName);
                 const roomSize = room ? room.size : 0;
                 const isInRoom = socket.rooms.has(roomName);
-                
+
                 console.log(`[SOCKET] ✅✅✅ Socket ${socket.id} joined room: ${roomName}`);
                 console.log(`[SOCKET] Room members count: ${roomSize}`);
                 console.log(`[SOCKET] Room exists: ${room !== undefined}`);
                 console.log(`[SOCKET] Socket is in room: ${isInRoom}`);
                 console.log(`[SOCKET] All rooms for this socket: ${Array.from(socket.rooms).join(", ")}`);
-                
+
                 // Verify room membership
                 if (!isInRoom) {
                     console.log(`[SOCKET] ⚠️⚠️⚠️ WARNING: Socket claims to have joined but is not in room!`);
@@ -232,7 +171,7 @@ io.on('connection', (socket) => {
                     socket.join(roomName);
                     console.log(`[SOCKET] Retried join, now in room: ${socket.rooms.has(roomName)}`);
                 }
-                
+
                 // Emit confirmation back to client
                 socket.emit('room-joined', {
                     roomName: roomName,
@@ -243,23 +182,23 @@ io.on('connection', (socket) => {
                 });
                 console.log(`[SOCKET] ✅ Sent room-joined confirmation to socket ${socket.id}`);
                 console.log(`[SOCKET] Room ${roomName} now has ${roomSize} member(s)`);
-			} else {
-				console.log('[SOCKET] ⚠️⚠️⚠️ player-join received but screenId is empty or invalid');
+            } else {
+                console.log('[SOCKET] ⚠️⚠️⚠️ player-join received but screenId is empty or invalid');
                 socket.emit('room-join-error', { error: 'screenId is required' });
-			}
-		} catch (e) {
+            }
+        } catch (e) {
             console.error('[SOCKET] ❌❌❌ player-join error:', e);
             socket.emit('room-join-error', { error: e.message });
-		}
-	});
+        }
+    });
 
     socket.on('disconnect', (reason) => {
         console.log('[SOCKET] ⚠️ Socket disconnected');
         console.log('[SOCKET] Socket ID:', socket.id);
         console.log('[SOCKET] Reason:', reason);
         console.log('[SOCKET] Remaining connected sockets:', io.sockets.sockets.size);
-	});
-    
+    });
+
     // Handle ping/pong for connection health
     socket.on('ping', () => {
         socket.emit('pong');
@@ -370,16 +309,16 @@ app.post('/api/assets/cleanup', async (req, res) => {
     try {
         const { directoryPath, retentionDays } = req.body;
         const retention = retentionDays || assetCleanupService.ASSET_RETENTION_DAYS;
-        
+
         if (!directoryPath) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'directoryPath is required',
                 message: 'Provide the path to the directory containing assets to clean up'
             });
         }
-        
+
         const results = await assetCleanupService.cleanupAssets(directoryPath, retention);
-        
+
         res.json({
             ok: true,
             message: `Asset cleanup completed. Deleted: ${results.deleted}, Errors: ${results.errors}`,
@@ -387,9 +326,9 @@ app.post('/api/assets/cleanup', async (req, res) => {
         });
     } catch (error) {
         console.error('[ASSET_CLEANUP] API error:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Asset cleanup failed',
-            message: error.message 
+            message: error.message
         });
     }
 });
@@ -399,16 +338,16 @@ app.get('/api/assets/stats', async (req, res) => {
     try {
         const { directoryPath, retentionDays } = req.query;
         const retention = retentionDays ? parseInt(retentionDays, 10) : assetCleanupService.ASSET_RETENTION_DAYS;
-        
+
         if (!directoryPath) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'directoryPath is required',
                 message: 'Provide the path to the directory containing assets'
             });
         }
-        
+
         const stats = await assetCleanupService.getAssetStats(directoryPath, retention);
-        
+
         res.json({
             ok: true,
             retentionDays: retention,
@@ -416,9 +355,9 @@ app.get('/api/assets/stats', async (req, res) => {
         });
     } catch (error) {
         console.error('[ASSET_CLEANUP] Stats API error:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Failed to get asset stats',
-            message: error.message 
+            message: error.message
         });
     }
 });
@@ -426,8 +365,8 @@ app.get('/api/assets/stats', async (req, res) => {
 
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-	console.log(`Server listening on :${PORT}`);
-	console.log('[SOCKET] Socket.IO at /socket.io/ — if behind Nginx, proxy WebSocket for that path (see server/NGINX_SOCKET_IO.md)');
+    console.log(`Server listening on :${PORT}`);
+    console.log('[SOCKET] Socket.IO at /socket.io/ — if behind Nginx, proxy WebSocket for that path (see server/NGINX_SOCKET_IO.md)');
 });
 
 
@@ -435,8 +374,8 @@ server.listen(PORT, () => {
 // Global error handler
 app.use((err, req, res, next) => {
     console.error('[SERVER] Global error:', err);
-    res.status(500).json({ 
-        error: 'internal_server_error', 
+    res.status(500).json({
+        error: 'internal_server_error',
         message: err.message,
         path: req.path
     });
@@ -445,8 +384,8 @@ app.use((err, req, res, next) => {
 // Catch-all route (must be last)
 app.use('*', (req, res) => {
     console.log(`[SERVER] 404 for ${req.method} ${req.originalUrl}`);
-    res.status(404).json({ 
-        error: 'not_found', 
+    res.status(404).json({
+        error: 'not_found',
         message: `Endpoint ${req.method} ${req.originalUrl} not found`,
         path: req.originalUrl
     });
