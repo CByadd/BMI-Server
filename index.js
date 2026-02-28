@@ -61,29 +61,30 @@ const allowedOrigins = [
     'https://admin.well2day.in',
 ];
 
-app.use(cors({
-    origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps)
-        if (!origin) return callback(null, true);
+// Manual CORS middleware to ensure headers are always present
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
 
-        // Allow any localhost origin
-        if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-            return callback(null, true);
-        }
+    // Reflect the origin if present (required for credentials: true)
+    if (origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+    } else {
+        // Fallback for requests without origin (though browsers always send it for CORS)
+        res.header('Access-Control-Allow-Origin', '*');
+    }
 
-        if (allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            // For development, log but allow
-            console.log(`[CORS] Origin not in list but allowed in dev: ${origin}`);
-            callback(null, true);
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'X-Requested-With'],
-    optionsSuccessStatus: 200
-}));
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, X-Requested-With');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Max-Age', '86400'); // 24 hours
+
+    // Handle OPTIONS preflight requests immediately
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+
+    next();
+});
 
 app.use(express.json());
 // Basic request logger
