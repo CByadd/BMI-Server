@@ -175,6 +175,17 @@ exports.getBMIStats = async (req, res) => {
     });
     const dailyUsers = dailyUniqueUserIds.filter(u => u.userId !== null).length;
 
+    // Get total checks today
+    const dailyChecks = await prisma.bMI.count({
+      where: {
+        ...screenFilter,
+        timestamp: {
+          gte: today,
+          lte: todayEnd
+        }
+      }
+    });
+
     // Get total screens (filtered by role)
     const screenWhere = req.user.role === 'super_admin'
       ? { isActive: true }
@@ -195,26 +206,15 @@ exports.getBMIStats = async (req, res) => {
       }
     });
 
-    // TEMPORARY DEBUG: Return static values
-    res.json({
-      ok: true,
-      i_am_working: true,
-      totalRecords: 999,
-      totalUniqueUsers: 888,
-      dailyUsers: 77,
-      totalScreens: 66,
-      activeScreens: 55
-    });
-    /*
     res.json({
       ok: true,
       totalRecords: totalBMIRecords,
       totalUniqueUsers: totalUsers,
       dailyUsers,
+      dailyChecks,
       totalScreens,
       activeScreens
     });
-    */
   } catch (error) {
     console.error('Error fetching BMI stats:', error);
     res.status(500).json({ error: 'Failed to fetch BMI statistics' });
