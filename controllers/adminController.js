@@ -156,21 +156,24 @@ exports.getBMIStats = async (req, res) => {
     });
     const totalUsers = uniqueUserIds.filter(u => u.userId !== null).length;
 
-    // Get daily users (users who checked BMI today, filtered by screen)
+    // Get daily users (unique users who checked BMI today, filtered by screen)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayEnd = new Date(today);
     todayEnd.setHours(23, 59, 59, 999);
 
-    const dailyUsers = await prisma.bMI.count({
+    const dailyUniqueUserIds = await prisma.bMI.findMany({
       where: {
         ...screenFilter,
         timestamp: {
           gte: today,
           lte: todayEnd
         }
-      }
+      },
+      select: { userId: true },
+      distinct: ['userId']
     });
+    const dailyUsers = dailyUniqueUserIds.filter(u => u.userId !== null).length;
 
     // Get total screens (filtered by role)
     const screenWhere = req.user.role === 'super_admin'
@@ -193,7 +196,7 @@ exports.getBMIStats = async (req, res) => {
     });
 
     res.json({
-      totalUsers: totalBMIRecords,
+      totalRecords: totalBMIRecords,
       totalUniqueUsers: totalUsers,
       dailyUsers,
       totalScreens,
@@ -485,6 +488,17 @@ exports.getScreenBMIRecords = async (req, res) => {
       }
     });
 
+    // Calculate total revenue for this screen (all time, matching the filter)
+    const totalRevenueResult = await prisma.bMI.aggregate({
+      where: {
+        screenId: String(screenId),
+        paymentStatus: true
+      },
+      _sum: {
+        paymentAmount: true
+      }
+    });
+
     res.json({
       ok: true,
       records: formattedRecords,
@@ -499,7 +513,8 @@ exports.getScreenBMIRecords = async (req, res) => {
       stats: {
         todayUsers: todayRecords,
         totalUsers: totalRecords,
-        avgBMI: avgBMIResult._avg.bmi ? parseFloat(avgBMIResult._avg.bmi.toFixed(1)) : 0
+        avgBMI: avgBMIResult._avg.bmi ? parseFloat(avgBMIResult._avg.bmi.toFixed(1)) : 0,
+        totalRevenue: totalRevenueResult._sum.paymentAmount ? parseFloat(totalRevenueResult._sum.paymentAmount.toFixed(2)) : 0
       }
     });
   } catch (error) {

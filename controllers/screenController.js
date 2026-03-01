@@ -41,28 +41,28 @@ function saveBufferToAssets(buffer, originalName, prefix) {
  */
 exports.registerPlayer = async (req, res) => {
     try {
-        const { 
-            screenId, 
-            appVersion, 
-            flowType, 
-            deviceName, 
-            screenWidth, 
-            screenHeight, 
-            ipAddress, 
-            location, 
-            osVersion, 
-            appVersionCode 
+        const {
+            screenId,
+            appVersion,
+            flowType,
+            deviceName,
+            screenWidth,
+            screenHeight,
+            ipAddress,
+            location,
+            osVersion,
+            appVersionCode
         } = req.body || {};
-        
+
         if (!screenId || !appVersion) {
             return res.status(400).json({ error: 'screenId and appVersion required' });
         }
-        
+
         // Check if player already exists to preserve admin-configured values
         const existingPlayer = await prisma.adscapePlayer.findUnique({
             where: { screenId: String(screenId) }
         });
-        
+
         // Preserve admin-configured deviceName and location if they exist
         // Device registration should NOT overwrite admin-configured values
         const updateData = {
@@ -77,7 +77,7 @@ exports.registerPlayer = async (req, res) => {
             isActive: true,
             updatedAt: new Date()
         };
-        
+
         // Preserve admin-configured deviceName - only update if not already set
         if (existingPlayer && existingPlayer.deviceName && existingPlayer.deviceName.trim() !== '') {
             // Admin has configured a deviceName, preserve it (don't overwrite with device-sent value)
@@ -87,7 +87,7 @@ exports.registerPlayer = async (req, res) => {
             // No existing deviceName, use incoming value (or null)
             updateData.deviceName = deviceName ? String(deviceName) : null;
         }
-        
+
         // Preserve admin-configured location - only update if not already set
         if (existingPlayer && existingPlayer.location && existingPlayer.location.trim() !== '') {
             // Admin has configured a location, preserve it (don't overwrite with device-sent value)
@@ -97,7 +97,7 @@ exports.registerPlayer = async (req, res) => {
             // No existing location, use incoming value (or null)
             updateData.location = location ? String(location) : null;
         }
-        
+
         // Upsert Adscape player registration
         const player = await prisma.adscapePlayer.upsert({
             where: { screenId: String(screenId) },
@@ -117,11 +117,11 @@ exports.registerPlayer = async (req, res) => {
                 isActive: true
             }
         });
-        
+
         console.log('[ADSCAPE] Player registered:', { screenId, appVersion, flowType });
-        
-        return res.json({ 
-            ok: true, 
+
+        return res.json({
+            ok: true,
             player: {
                 id: player.id,
                 screenId: player.screenId,
@@ -143,7 +143,7 @@ exports.registerPlayer = async (req, res) => {
 exports.getPlayer = async (req, res) => {
     try {
         const { screenId } = req.params;
-        
+
         // Use raw SQL to fetch player to avoid Prisma error if heightCalibration column doesn't exist
         let player;
         try {
@@ -164,7 +164,7 @@ exports.getPlayer = async (req, res) => {
                 return res.status(404).json({ error: 'Player not found' });
             }
         }
-        
+
         // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, flowDrawerSlots, hideScreenId, and flow drawer images using raw SQL (columns might not exist yet)
         let playlistId = null;
         let heightCalibration = 0;
@@ -217,14 +217,14 @@ exports.getPlayer = async (req, res) => {
                 if (configResult[0].hideScreenId !== null && configResult[0].hideScreenId !== undefined) {
                     hideScreenId = Boolean(configResult[0].hideScreenId);
                 }
-                
+
                 // Get individual URL fields
                 flowDrawerImage1Url = configResult[0].flowDrawerImage1Url || null;
                 flowDrawerImage2Url = configResult[0].flowDrawerImage2Url || null;
                 flowDrawerImage3Url = configResult[0].flowDrawerImage3Url || null;
                 flowDrawerImage4Url = configResult[0].flowDrawerImage4Url || null;
                 flowDrawerImage5Url = configResult[0].flowDrawerImage5Url || null;
-                
+
                 // Build slots array from individual URL fields based on slot count
                 flowDrawerSlots = [];
                 if (flowDrawerSlotCount >= 1) flowDrawerSlots.push(flowDrawerImage1Url);
@@ -232,7 +232,7 @@ exports.getPlayer = async (req, res) => {
                 if (flowDrawerSlotCount >= 3) flowDrawerSlots.push(flowDrawerImage3Url);
                 if (flowDrawerSlotCount >= 4) flowDrawerSlots.push(flowDrawerImage4Url);
                 if (flowDrawerSlotCount >= 5) flowDrawerSlots.push(flowDrawerImage5Url);
-                
+
                 console.log('[ADSCAPE] Loaded flow drawer config:', {
                     slotCount: flowDrawerSlotCount,
                     slotsLength: flowDrawerSlots.length,
@@ -276,7 +276,7 @@ exports.getPlayer = async (req, res) => {
         } catch (e) {
             console.log('[ADSCAPE] WhatsApp config columns may not exist, using defaults:', e.message);
         }
-        
+
         return res.json({
             ok: true,
             player: {
@@ -333,7 +333,7 @@ exports.getAllPlayers = async (req, res) => {
         const whereClause = req.user.role === 'super_admin'
             ? {}
             : { screenId: { in: req.user.assignedScreenIds } };
-        
+
         // Try to get players with heightCalibration, paymentAmount, playlistId, flowDrawerEnabled using raw SQL, fallback if columns don't exist
         let players;
         try {
@@ -397,7 +397,33 @@ exports.getAllPlayers = async (req, res) => {
                 }
             }
         }
-        
+
+        // Get BMI counts for all screens
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(today);
+        todayEnd.setHours(23, 59, 59, 999);
+
+        const [totalCounts, todayCounts] = await Promise.all([
+            prisma.bMI.groupBy({
+                by: ['screenId'],
+                _count: { _all: true }
+            }),
+            prisma.bMI.groupBy({
+                by: ['screenId'],
+                where: {
+                    timestamp: {
+                        gte: today,
+                        lte: todayEnd
+                    }
+                },
+                _count: { _all: true }
+            })
+        ]);
+
+        const totalCountMap = Object.fromEntries(totalCounts.map(c => [c.screenId, c._count._all]));
+        const todayCountMap = Object.fromEntries(todayCounts.map(c => [c.screenId, c._count._all]));
+
         return res.json({
             ok: true,
             players: players.map(player => ({
@@ -417,7 +443,9 @@ exports.getAllPlayers = async (req, res) => {
                 flowDrawerEnabled: player.flowDrawerEnabled ?? true,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
-                createdAt: player.createdAt
+                createdAt: player.createdAt,
+                todayData: todayCountMap[player.screenId] || 0,
+                totalData: totalCountMap[player.screenId] || 0
             }))
         });
     } catch (e) {
@@ -434,21 +462,21 @@ exports.updateFlowType = async (req, res, io) => {
     try {
         const { screenId } = req.params;
         const { flowType } = req.body;
-        
+
         if (!flowType) {
             return res.status(400).json({ error: 'flowType required' });
         }
-        
+
         // Normalize flowType: "Normal" becomes null, otherwise keep as is
         const normalizedFlowType = flowType === 'Normal' || flowType === 'normal' || flowType === '' ? null : String(flowType);
-        
+
         const player = await prisma.adscapePlayer.update({
             where: { screenId: String(screenId) },
             data: { flowType: normalizedFlowType }
         });
-        
+
         console.log('[ADSCAPE] Flow type updated:', { screenId, flowType: normalizedFlowType });
-        
+
         // Emit real-time update to Android app via WebSocket
         if (io) {
             io.to(`screen:${String(screenId)}`).emit('flow-type-changed', {
@@ -457,7 +485,7 @@ exports.updateFlowType = async (req, res, io) => {
             });
             console.log('[ADSCAPE] Flow type change emitted to screen:', screenId);
         }
-        
+
         return res.json({
             ok: true,
             player: {
@@ -478,11 +506,11 @@ exports.updateFlowType = async (req, res, io) => {
 exports.updatePlayerStatus = async (req, res) => {
     try {
         const { screenId, isActive } = req.body || {};
-        
+
         if (!screenId) {
             return res.status(400).json({ error: 'screenId required' });
         }
-        
+
         const player = await prisma.adscapePlayer.update({
             where: { screenId: String(screenId) },
             data: {
@@ -490,9 +518,9 @@ exports.updatePlayerStatus = async (req, res) => {
                 ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {})
             }
         });
-        
+
         console.log('[ADSCAPE] Player status updated:', { screenId, isActive: player.isActive });
-        
+
         return res.json({
             ok: true,
             player: {
@@ -514,11 +542,11 @@ exports.updatePlayerStatus = async (req, res) => {
 exports.getPlayerByCode = async (req, res) => {
     try {
         const { code } = req.params;
-        
+
         if (!code || code.length !== 8) {
             return res.status(400).json({ error: 'Invalid registration code. Must be 8 digits.' });
         }
-        
+
         // Find player by matching the last 8 characters of screenId
         // or by a generated code (for now, we'll search by screenId ending)
         const players = await prisma.adscapePlayer.findMany({
@@ -528,14 +556,14 @@ exports.getPlayerByCode = async (req, res) => {
                 }
             }
         });
-        
+
         if (players.length === 0) {
             return res.status(404).json({ error: 'Player not found' });
         }
-        
+
         // If multiple matches, return the first one
         const player = players[0];
-        
+
         return res.json({
             ok: true,
             player: {
@@ -568,7 +596,7 @@ exports.getPlayerByCode = async (req, res) => {
 exports.uploadLogo = async (req, res) => {
     try {
         const { screenId } = req.params;
-        
+
         if (!req.file) {
             return res.status(400).json({ error: 'No logo file provided' });
         }
@@ -621,7 +649,7 @@ exports.uploadLogo = async (req, res) => {
 exports.getLogo = async (req, res) => {
     try {
         const { screenId } = req.params;
-        
+
         // Use raw SQL to fetch logoUrl (column might not exist in older schemas)
         let logoUrl = null;
         try {
@@ -661,7 +689,7 @@ exports.getLogo = async (req, res) => {
 exports.deleteLogo = async (req, res) => {
     try {
         const { screenId } = req.params;
-        
+
         // Check if player exists
         const player = await prisma.adscapePlayer.findUnique({
             where: { screenId: String(screenId) }
@@ -700,7 +728,7 @@ exports.deleteLogo = async (req, res) => {
 exports.uploadFlowDrawerImage = async (req, res) => {
     try {
         const { screenId, imageNumber } = req.params;
-        
+
         if (!req.file) {
             return res.status(400).json({ ok: false, error: 'No image file provided' });
         }
@@ -722,7 +750,7 @@ exports.uploadFlowDrawerImage = async (req, res) => {
         // Get current slot count
         let slotCount = 2; // Default
         let oldImageUrl = null;
-        
+
         try {
             const configResult = await prisma.$queryRaw`
                 SELECT "flowDrawerSlotCount", "flowDrawerImage1Url", "flowDrawerImage2Url",
@@ -765,7 +793,7 @@ exports.uploadFlowDrawerImage = async (req, res) => {
             3: 'flowDrawerImage4Url',
             4: 'flowDrawerImage5Url'
         };
-        
+
         const fieldName = fieldMap[slotIndex];
         if (!fieldName) {
             return res.status(400).json({ ok: false, error: 'Invalid slot number' });
@@ -826,7 +854,7 @@ exports.uploadFlowDrawerImage = async (req, res) => {
 exports.getFlowDrawerImages = async (req, res) => {
     try {
         const { screenId } = req.params;
-        
+
         // Use raw SQL to fetch flow drawer slot count and slots array
         let slotCount = 2; // Default
         let slots = [];
@@ -849,7 +877,7 @@ exports.getFlowDrawerImages = async (req, res) => {
                 const flowDrawerImage3Url = imageResult[0].flowDrawerImage3Url || null;
                 const flowDrawerImage4Url = imageResult[0].flowDrawerImage4Url || null;
                 const flowDrawerImage5Url = imageResult[0].flowDrawerImage5Url || null;
-                
+
                 // Build slots array from individual URL fields based on slot count
                 slots = [];
                 if (slotCount >= 1) slots.push(flowDrawerImage1Url);
@@ -896,7 +924,7 @@ exports.getFlowDrawerImages = async (req, res) => {
 exports.deleteFlowDrawerImage = async (req, res) => {
     try {
         const { screenId, imageNumber } = req.params;
-        
+
         const slotIndex = parseInt(imageNumber) - 1; // Convert to 0-based index
         if (slotIndex < 0) {
             return res.status(400).json({ ok: false, error: 'Image number must be 1 or greater' });
@@ -914,7 +942,7 @@ exports.deleteFlowDrawerImage = async (req, res) => {
         // Get current slot count and image URL for the slot
         let slotCount = 2; // Default
         let imageUrl = null;
-        
+
         try {
             const configResult = await prisma.$queryRaw`
                 SELECT "flowDrawerSlotCount", "flowDrawerImage1Url", "flowDrawerImage2Url",
@@ -957,7 +985,7 @@ exports.deleteFlowDrawerImage = async (req, res) => {
             3: 'flowDrawerImage4Url',
             4: 'flowDrawerImage5Url'
         };
-        
+
         const fieldName = fieldMap[slotIndex];
         if (!fieldName) {
             return res.status(400).json({ ok: false, error: 'Invalid slot number' });
@@ -1018,32 +1046,32 @@ exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
         const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId, smsEnabled, smsLimitPerScreen, resetSmsCount, whatsappEnabled, whatsappLimitPerScreen, resetWhatsAppCount } = req.body || {};
-        
-        console.log('[ADSCAPE] Update screen config request:', { 
-            screenId, 
+
+        console.log('[ADSCAPE] Update screen config request:', {
+            screenId,
             playlistId,
-            body: req.body 
+            body: req.body
         });
-        
+
         const updateData = {};
-        
+
         if (flowType !== undefined) {
             // Normalize flowType: "Normal" becomes null, otherwise keep as is
             updateData.flowType = flowType === 'Normal' || flowType === 'normal' || flowType === '' ? null : String(flowType);
         }
-        
+
         if (isActive !== undefined) {
             updateData.isActive = Boolean(isActive);
         }
-        
+
         if (deviceName !== undefined) {
             updateData.deviceName = deviceName ? String(deviceName) : null;
         }
-        
+
         if (location !== undefined) {
             updateData.location = location ? String(location) : null;
         }
-        
+
         if (heightCalibration !== undefined) {
             // Allow null or empty string to clear the calibration (will use default 0 from database)
             if (heightCalibration === null || heightCalibration === undefined || heightCalibration === "") {
@@ -1056,11 +1084,11 @@ exports.updateScreenConfig = async (req, res, io) => {
                 updateData.heightCalibration = numValue;
             }
         }
-        
+
         if (heightCalibrationEnabled !== undefined) {
             updateData.heightCalibrationEnabled = Boolean(heightCalibrationEnabled);
         }
-        
+
         if (paymentAmount !== undefined) {
             // Allow null or empty string to clear the payment amount
             if (paymentAmount === null || paymentAmount === undefined || paymentAmount === "") {
@@ -1073,11 +1101,11 @@ exports.updateScreenConfig = async (req, res, io) => {
                 updateData.paymentAmount = numValue;
             }
         }
-        
+
         if (flowDrawerEnabled !== undefined) {
             updateData.flowDrawerEnabled = Boolean(flowDrawerEnabled);
         }
-        
+
         if (hideScreenId !== undefined) {
             updateData.hideScreenId = Boolean(hideScreenId);
         }
@@ -1109,7 +1137,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                 updateData.whatsappLimitPerScreen = n;
             }
         }
-        
+
         if (flowDrawerSlotCount !== undefined) {
             const slotCount = parseInt(flowDrawerSlotCount);
             if (slotCount !== 2 && slotCount !== 3 && slotCount !== 5) {
@@ -1144,7 +1172,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                     throw e;
                 }
             }
-            
+
             // Resize slots array if needed
             try {
                 const configResult = await prisma.$queryRaw`
@@ -1157,7 +1185,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                 if (configResult && configResult.length > 0 && configResult[0].flowDrawerSlots) {
                     slots = JSON.parse(JSON.stringify(configResult[0].flowDrawerSlots));
                 }
-                
+
                 // Resize array to match new slot count
                 while (slots.length < slotCount) {
                     slots.push(null);
@@ -1165,7 +1193,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                 if (slots.length > slotCount) {
                     slots = slots.slice(0, slotCount);
                 }
-                
+
                 // Update slots array
                 await prisma.$executeRaw`
                     UPDATE "AdscapePlayer"
@@ -1192,7 +1220,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                 }
             }
         }
-        
+
         if (resetSmsCount === true) {
             try {
                 await prisma.$executeRawUnsafe(
@@ -1209,11 +1237,11 @@ exports.updateScreenConfig = async (req, res, io) => {
                 }
             }
         }
-        
+
         if (Object.keys(updateData).length === 0 && playlistId === undefined && flowDrawerSlotCount === undefined && (smsEnabled === undefined && smsLimitPerScreen === undefined) && (whatsappEnabled === undefined && whatsappLimitPerScreen === undefined) && !(resetSmsCount === true) && !(resetWhatsAppCount === true)) {
             return res.status(400).json({ error: 'At least one field required for update' });
         }
-        
+
         // Update player config
         let player = null;
         if (Object.keys(updateData).length > 0) {
@@ -1237,11 +1265,11 @@ exports.updateScreenConfig = async (req, res, io) => {
             const smsLimitPerScreenValue = updateData.smsLimitPerScreen;
             const whatsappEnabledValue = updateData.whatsappEnabled;
             const whatsappLimitPerScreenValue = updateData.whatsappLimitPerScreen;
-            
+
             if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId || hasSmsEnabled || hasSmsLimitPerScreen || hasWhatsAppEnabled || hasWhatsAppLimitPerScreen) {
                 // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, whatsappEnabled, whatsappLimitPerScreen from updateData for Prisma update
                 const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, whatsappEnabled, whatsappLimitPerScreen, ...prismaUpdateData } = updateData;
-                
+
                 // Update other fields with Prisma if there are any
                 if (Object.keys(prismaUpdateData).length > 0) {
                     player = await prisma.adscapePlayer.update({
@@ -1264,12 +1292,12 @@ exports.updateScreenConfig = async (req, res, io) => {
                         });
                     }
                 }
-                
+
                 // Update heightCalibration and paymentAmount using raw SQL
                 // First check if columns exist, if not create them
                 const updateFields = [];
                 const updateValues = [];
-                
+
                 if (hasHeightCalibration) {
                     try {
                         await prisma.$executeRaw`
@@ -1296,7 +1324,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                         }
                     }
                 }
-                
+
                 if (hasHeightCalibrationEnabled) {
                     try {
                         await prisma.$executeRaw`
@@ -1323,7 +1351,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                         }
                     }
                 }
-                
+
                 if (hasPaymentAmount) {
                     try {
                         await prisma.$executeRaw`
@@ -1350,7 +1378,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                         }
                     }
                 }
-                
+
                 if (hasFlowDrawerEnabled) {
                     try {
                         await prisma.$executeRaw`
@@ -1377,7 +1405,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                         }
                     }
                 }
-                
+
                 if (hasHideScreenId) {
                     try {
                         await prisma.$executeRaw`
@@ -1480,7 +1508,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                         }
                     }
                 }
-                
+
                 // Fetch updated player using raw SQL to avoid Prisma error
                 try {
                     const playerResult = await prisma.$queryRaw`
@@ -1507,24 +1535,24 @@ exports.updateScreenConfig = async (req, res, io) => {
                 where: { screenId: String(screenId) }
             });
         }
-        
+
         // Handle playlist assignment (store directly in AdscapePlayer table)
         // Always process playlist assignment if provided (even if null to clear)
         if (playlistId !== undefined) {
             try {
-                console.log('[ADSCAPE] Processing playlist assignment:', { 
-                    screenId, 
+                console.log('[ADSCAPE] Processing playlist assignment:', {
+                    screenId,
                     playlistId,
                     playlistIdType: typeof playlistId
                 });
-                
+
                 // Determine the playlist ID to use (null if empty string or 'none')
-                const finalPlaylistId = playlistId && playlistId !== '' && playlistId !== 'none' 
-                    ? String(playlistId) 
+                const finalPlaylistId = playlistId && playlistId !== '' && playlistId !== 'none'
+                    ? String(playlistId)
                     : null;
-                
+
                 console.log('[ADSCAPE] Final playlist ID determined:', finalPlaylistId);
-                
+
                 // Update playlistId in AdscapePlayer table using raw SQL (column might not exist yet)
                 try {
                     await prisma.$executeRaw`
@@ -1552,7 +1580,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                         throw e;
                     }
                 }
-                
+
                 // Verify the save by reading it back
                 try {
                     const verifyResult = await prisma.$queryRaw`
@@ -1562,7 +1590,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                 } catch (e) {
                     console.log('[ADSCAPE] Could not verify playlistId (column might not exist yet)');
                 }
-                
+
                 console.log('[ADSCAPE] Playlist assignment completed:', { screenId, playlistId: finalPlaylistId });
             } catch (playlistError) {
                 console.error('[ADSCAPE] Error updating playlist assignment:', playlistError);
@@ -1574,9 +1602,9 @@ exports.updateScreenConfig = async (req, res, io) => {
         } else {
             console.log('[ADSCAPE] No playlist assignment data provided - skipping playlist update');
         }
-        
+
         console.log('[ADSCAPE] Screen config updated:', { screenId, ...updateData, playlistId });
-        
+
         // Get current playlistId from AdscapePlayer
         let currentPlaylistId = null;
         try {
@@ -1589,7 +1617,7 @@ exports.updateScreenConfig = async (req, res, io) => {
         } catch (e) {
             // Column might not exist yet
         }
-        
+
         // Emit real-time update if flowType changed
         if (io && updateData.flowType !== undefined) {
             io.to(`screen:${String(screenId)}`).emit('flow-type-changed', {
@@ -1598,13 +1626,13 @@ exports.updateScreenConfig = async (req, res, io) => {
             });
             console.log('[ADSCAPE] Flow type change emitted to screen:', screenId);
         }
-        
+
         // Emit screen-config-changed event when playlist or config is updated
         // This allows Android app to immediately detect playlist changes
         // Emit if playlist was updated OR if screen config (isActive) was updated
         const playlistWasUpdated = playlistId !== undefined;
         const configWasUpdated = updateData.isActive !== undefined || updateData.deviceName !== undefined || updateData.location !== undefined;
-        
+
         if (io && (playlistWasUpdated || configWasUpdated)) {
             io.to(`screen:${String(screenId)}`).emit('screen-config-changed', {
                 screenId: String(screenId),
@@ -1618,7 +1646,7 @@ exports.updateScreenConfig = async (req, res, io) => {
                 reason: playlistWasUpdated ? 'playlist_updated' : 'config_updated'
             });
         }
-        
+
         // Get heightCalibration from player (it might be updated via raw SQL)
         let heightCalibrationValue = 0;
         try {
@@ -1635,7 +1663,7 @@ exports.updateScreenConfig = async (req, res, io) => {
             // Column doesn't exist, use default 0
             heightCalibrationValue = 0;
         }
-        
+
         // Get logoUrl from player
         let logoUrlValue = null;
         try {
@@ -1652,7 +1680,7 @@ exports.updateScreenConfig = async (req, res, io) => {
             // Column doesn't exist yet or error, use null
             logoUrlValue = null;
         }
-        
+
         // Get flowDrawerEnabled from player
         let flowDrawerEnabledValue = true;
         try {
@@ -1669,7 +1697,7 @@ exports.updateScreenConfig = async (req, res, io) => {
             // Column doesn't exist yet, use default true
             flowDrawerEnabledValue = true;
         }
-        
+
         // Get hideScreenId from player
         let hideScreenIdValue = false;
         try {
@@ -1716,13 +1744,13 @@ exports.updateScreenConfig = async (req, res, io) => {
 exports.deletePlayer = async (req, res) => {
     try {
         const { screenId } = req.params;
-        
+
         await prisma.adscapePlayer.delete({
             where: { screenId: String(screenId) }
         });
-        
+
         console.log('[ADSCAPE] Player deleted:', { screenId });
-        
+
         return res.json({ ok: true, message: 'Player deleted successfully' });
     } catch (e) {
         console.error('[ADSCAPE] Delete player error:', e);
