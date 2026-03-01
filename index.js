@@ -103,8 +103,8 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
+app.use(express.json({ limit: '1024mb' }));
+app.use(express.urlencoded({ limit: '1024mb', extended: true }));
 // Basic request logger
 app.use((req, _res, next) => {
     console.log(`[HTTP] ${req.method} ${req.url}`);
@@ -387,6 +387,11 @@ server.listen(PORT, () => {
     console.log(`Server listening on :${PORT}`);
     console.log('[SOCKET] Socket.IO at /socket.io/ — if behind Nginx, proxy WebSocket for that path (see server/NGINX_SOCKET_IO.md)');
 });
+
+// Set server timeouts for large file uploads
+server.timeout = 10 * 60 * 1000; // 10 minutes
+server.keepAliveTimeout = 65 * 1000;
+server.headersTimeout = 66 * 1000;
 
 
 

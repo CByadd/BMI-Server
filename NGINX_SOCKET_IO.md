@@ -147,10 +147,10 @@ If the client uses a different origin than the one Nginx exposes, connections ca
 
 If you get "CORS errors" or "Network Errors" specifically during media uploads (e.g. photos, videos), Nginx might be rejecting the request because it's too large.
 
-Add this line inside the `http` block or your `server` block to allow up to 100MB uploads:
+Add this line inside the `http` block or your `server` block to allow up to 1GB uploads:
 
 ```nginx
-client_max_body_size 100M;
+client_max_body_size 1024M;
 ```
 
 After adding this, reload Nginx:
