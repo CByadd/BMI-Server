@@ -45,6 +45,7 @@ const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:3000',
+    'http://localhost:3001',
     'http://localhost:8080',
     'http://localhost:8081',
     'http://localhost:8082',
@@ -60,6 +61,22 @@ const allowedOrigins = [
     'https://app.well2day.in',
     'https://admin.well2day.in',
 ];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'X-Requested-With'],
+    credentials: true,
+    maxAge: 86400
+}));
 
 // Manual CORS middleware to ensure headers are always present
 app.use((req, res, next) => {

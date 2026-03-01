@@ -142,3 +142,18 @@ If the client uses a different origin than the one Nginx exposes, connections ca
 
 - From the VPS: `curl -i http://127.0.0.1:4000/socket.io/?EIO=4&transport=polling` should return HTTP 200 and a body (Socket.IO handshake).
 - From outside: same URL but with your public host and scheme; Nginx must proxy it to the app and preserve the path.
+
+## 6. Max Body Size (Media Uploads)
+
+If you get "CORS errors" or "Network Errors" specifically during media uploads (e.g. photos, videos), Nginx might be rejecting the request because it's too large.
+
+Add this line inside the `http` block or your `server` block to allow up to 100MB uploads:
+
+```nginx
+client_max_body_size 100M;
+```
+
+After adding this, reload Nginx:
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
