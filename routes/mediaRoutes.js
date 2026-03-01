@@ -37,7 +37,7 @@ const upload = multer({
   },
 });
 
-router.post('/upload', authenticateToken, upload.array('files', 10), mediaController.uploadMedia);
+router.post('/upload', authenticateToken, upload.array('files', 50), mediaController.uploadMedia);
 router.get('/', authenticateToken, mediaController.getAllMedia);
 router.delete('/delete', authenticateToken, mediaController.deleteMedia);
 

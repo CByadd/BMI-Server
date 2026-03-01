@@ -32,22 +32,28 @@ exports.getAllPlaylists = async (req, res) => {
     const formattedPlaylists = playlists.map((playlist) => {
       const slots = playlist.slots ? JSON.parse(playlist.slots) : [];
       const filledSlots = slots.filter(slot => slot !== null && slot !== undefined).length;
-      const totalDuration = slots.reduce((sum, slot) => {
+      const totalDuration = Math.max(0, slots.reduce((sum, slot) => {
         return sum + (slot?.duration || 0);
-      }, 0);
+      }, 0));
       const minutes = Math.floor(totalDuration / 60);
       const seconds = totalDuration % 60;
       const durationStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
 
-      // Calculate time ago
-      const updatedAt = new Date(playlist.updated_at);
-      const timeDiff = Date.now() - updatedAt.getTime();
-      const minutesAgo = Math.floor(timeDiff / (1000 * 60));
-      const hoursAgo = Math.floor(timeDiff / (1000 * 60 * 60));
-      const daysAgo = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-      
+      // Calculate time ago safely
+      const updatedAtStr = playlist.updated_at;
+      const updatedAt = updatedAtStr instanceof Date ? updatedAtStr : new Date(updatedAtStr);
+      const now = new Date();
+      const timeDiff = Math.max(0, now.getTime() - updatedAt.getTime());
+
+      // Handle potentially negative timeDiff (clock skew or TZ issues)
+      const minutesAgo = Math.max(0, Math.floor(timeDiff / (1000 * 60)));
+      const hoursAgo = Math.floor(minutesAgo / 60);
+      const daysAgo = Math.floor(hoursAgo / 24);
+
       let lastUpdated = "";
-      if (minutesAgo < 60) {
+      if (minutesAgo < 1) {
+        lastUpdated = "Just now";
+      } else if (minutesAgo < 60) {
         lastUpdated = `${minutesAgo} ${minutesAgo === 1 ? 'min' : 'mins'} ago`;
       } else if (hoursAgo < 24) {
         lastUpdated = `${hoursAgo} ${hoursAgo === 1 ? 'hour' : 'hours'} ago`;
@@ -81,7 +87,7 @@ exports.getPlaylistById = async (req, res) => {
     const { id } = req.params;
     const adminId = req.user?.id;
     const userRole = req.user?.role;
-    
+
     let playlist = null;
     try {
       const results = await prisma.$queryRaw`
@@ -126,7 +132,7 @@ exports.createPlaylist = async (req, res, io) => {
   try {
     const { name, description, tags, slots } = req.body;
     const adminId = req.user?.id;
-    
+
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Playlist name is required' });
     }
@@ -140,8 +146,8 @@ exports.createPlaylist = async (req, res, io) => {
       // Try to insert into database with created_by (cast to uuid for PostgreSQL)
       await prisma.$executeRawUnsafe(
         `INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6::uuid, NOW(), NOW())`,
-        id, name, description || '', JSON.stringify(tagsArray), JSON.stringify(playlistSlots), adminId
+         VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8)`,
+        id, name, description || '', JSON.stringify(tagsArray), JSON.stringify(playlistSlots), adminId, new Date(), new Date()
       );
     } catch (dbError) {
       // If table doesn't exist, create it
@@ -165,8 +171,8 @@ exports.createPlaylist = async (req, res, io) => {
         `);
         await prisma.$executeRawUnsafe(
           `INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6::uuid, NOW(), NOW())`,
-          id, name, description || '', JSON.stringify(tagsArray), JSON.stringify(playlistSlots), adminId
+           VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8)`,
+          id, name, description || '', JSON.stringify(tagsArray), JSON.stringify(playlistSlots), adminId, new Date(), new Date()
         );
       } catch (createError) {
         console.error('[PLAYLIST] Create table error:', createError);
@@ -204,7 +210,7 @@ exports.updatePlaylist = async (req, res, io) => {
     const existingResult = await prisma.$queryRaw`
       SELECT id, created_by FROM playlists WHERE id = ${id}
     `;
-    
+
     // Check access if playlist exists
     if (existingResult && existingResult.length > 0) {
       const playlist = existingResult[0];
@@ -213,17 +219,17 @@ exports.updatePlaylist = async (req, res, io) => {
         return res.status(403).json({ error: 'You can only update playlists you created' });
       }
     }
-    
+
     if (!existingResult || existingResult.length === 0) {
       console.log('[PLAYLIST] Playlist not found, creating new one:', id);
       // Playlist doesn't exist, create it
       const tagsArray = tags ? (typeof tags === 'string' ? tags.split(',').map(t => t.trim()).filter(t => t) : tags) : [];
       const playlistName = name || `Playlist ${id}`;
-      
+
       await prisma.$executeRawUnsafe(
         `INSERT INTO playlists (id, name, description, tags, slots, created_by, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6::uuid, NOW(), NOW())`,
-        id, playlistName, description || '', JSON.stringify(tagsArray), JSON.stringify(slots || []), adminId
+         VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8)`,
+        id, playlistName, description || '', JSON.stringify(tagsArray), JSON.stringify(slots || []), adminId, new Date(), new Date()
       );
       console.log('[PLAYLIST] Created new playlist:', id);
     } else {
@@ -237,14 +243,14 @@ exports.updatePlaylist = async (req, res, io) => {
         if (description !== undefined) updates.push(`description = '${(description || '').replace(/'/g, "''")}'`);
         if (tags !== undefined) updates.push(`tags = '${JSON.stringify(tagsArray).replace(/'/g, "''")}'`);
         if (slots !== undefined) updates.push(`slots = '${JSON.stringify(slots).replace(/'/g, "''")}'`);
-        updates.push(`updated_at = NOW()`);
+        updates.push(`updated_at = $1`);
 
         if (updates.length > 0) {
           const updateResult = await prisma.$executeRawUnsafe(`
             UPDATE playlists 
             SET ${updates.join(', ')}
             WHERE id = '${id.replace(/'/g, "''")}'
-          `);
+          `, new Date());
           console.log('[PLAYLIST] Update query executed, rows affected:', updateResult);
         }
       } catch (dbError) {
@@ -275,15 +281,15 @@ exports.updatePlaylist = async (req, res, io) => {
           FROM screen_playlists 
           WHERE playlist_id = ${String(id)}
         `;
-        
+
         if (screensUsingPlaylist && screensUsingPlaylist.length > 0) {
           console.log(`[PLAYLIST] Notifying ${screensUsingPlaylist.length} screen(s) about playlist update: ${id}`);
-          
+
           for (const screen of screensUsingPlaylist) {
             const screenId = screen.screen_id;
             const formattedStartDate = screen.start_date ? new Date(screen.start_date).toISOString() : null;
             const formattedEndDate = screen.end_date ? new Date(screen.end_date).toISOString() : null;
-            
+
             // Emit playlist-content-changed event to trigger immediate refresh
             io.to(`screen:${screenId}`).emit('playlist-content-changed', {
               playlistId: id,
@@ -292,7 +298,7 @@ exports.updatePlaylist = async (req, res, io) => {
               playlistEndDate: formattedEndDate,
               reason: 'playlist_content_updated'
             });
-            
+
             console.log(`[PLAYLIST] Emitted playlist-content-changed to screen: ${screenId}`);
           }
         }
@@ -330,7 +336,7 @@ exports.deletePlaylist = async (req, res) => {
       const existingResult = await prisma.$queryRaw`
         SELECT id, created_by FROM playlists WHERE id = ${id}
       `;
-      
+
       if (!existingResult || existingResult.length === 0) {
         return res.status(404).json({ error: 'Playlist not found' });
       }
