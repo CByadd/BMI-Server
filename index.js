@@ -283,8 +283,8 @@ app.use('/api', require('./routes/otpRoutes'));
 app.use('/api', adminRoutes);
 console.log('[SERVER] Admin routes mounted at /api');
 app.use('/api', screenRoutes(io)); // Pass io for real-time updates
-app.use('/api/billboards', billboardRoutes);
-app.use('/api', campaignRoutes);
+app.use('/api/billboards', billboardRoutes(io));
+app.use('/api', campaignRoutes(io));
 app.use('/api', slotRoutes);
 app.use('/api/registrations', registrationRoutes);
 app.use('/api/media', require('./routes/mediaRoutes'));

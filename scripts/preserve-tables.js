@@ -64,9 +64,23 @@ async function preserveTables() {
     `);
     console.log('✓ asset_play_logs table verified');
 
+    // Ensure schedules table exists (used in scheduleController.js)
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS schedules (
+        id VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        events TEXT,
+        status VARCHAR(50) DEFAULT 'active',
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP
+      )
+    `);
+    console.log('✓ schedules table verified');
+
     console.log('\n✓ All required tables are preserved');
     console.log('You can now safely run: npx prisma db push --accept-data-loss');
-    
+
   } catch (error) {
     console.error('Error preserving tables:', error);
     process.exit(1);

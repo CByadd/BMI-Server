@@ -37,8 +37,12 @@ const upload = multer({
   },
 });
 
-router.post('/upload', authenticateToken, upload.array('files', 50), mediaController.uploadMedia);
-router.get('/', authenticateToken, mediaController.getAllMedia);
-router.delete('/delete', authenticateToken, mediaController.deleteMedia);
+module.exports = (io) => {
+  const mediaController = require('../controllers/mediaController')(io);
 
-module.exports = router;
+  router.post('/upload', authenticateToken, upload.array('files', 50), mediaController.uploadMedia);
+  router.get('/', authenticateToken, mediaController.getAllMedia);
+  router.delete('/delete', authenticateToken, mediaController.deleteMedia);
+
+  return router;
+};

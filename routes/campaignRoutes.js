@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const campaignController = require('../controllers/campaignController');
 const multer = require('multer');
 
-const upload = multer({ 
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
@@ -11,26 +10,30 @@ const upload = multer({
   }
 });
 
-// Campaign creation with file upload
-router.post('/create-campaign', upload.array('files'), campaignController.createCampaign);
+module.exports = (io) => {
+  const campaignController = require('../controllers/campaignController')(io);
 
-// Get campaigns
-router.get('/campaigns', campaignController.getCampaignsByUser);
-router.get('/campaignsu', campaignController.getAllCampaigns);
-router.get('/campaignsuz', campaignController.getCampaignsByUserEmail);
-router.get('/campaigns/:id', campaignController.getCampaignById);
-router.get('/campaigns/:id/with-billboard-statuses', campaignController.getCampaignWithBillboardStatuses);
+  // Campaign creation with file upload
+  router.post('/create-campaign', upload.array('files'), campaignController.createCampaign);
 
-// Update campaign
-router.put('/campaigns/:id/status', campaignController.updateCampaignStatus);
-router.put('/campaigns/:campaignId/billboards/:billboardId/status', campaignController.updateBillboardStatus);
-router.put('/update-campaign-name', campaignController.updateCampaignName);
+  // Get campaigns
+  router.get('/campaigns', campaignController.getCampaignsByUser);
+  router.get('/campaignsu', campaignController.getAllCampaigns);
+  router.get('/campaignsuz', campaignController.getCampaignsByUserEmail);
+  router.get('/campaigns/:id', campaignController.getCampaignById);
+  router.get('/campaigns/:id/with-billboard-statuses', campaignController.getCampaignWithBillboardStatuses);
 
-// Delete campaign
-router.delete('/campaigns/:id', campaignController.deleteCampaign);
-router.delete('/campaigns/:campaignId/billboards/:billboardId', campaignController.deleteBillboardFromCampaign);
+  // Update campaign
+  router.put('/campaigns/:id/status', campaignController.updateCampaignStatus);
+  router.put('/campaigns/:campaignId/billboards/:billboardId/status', campaignController.updateBillboardStatus);
+  router.put('/update-campaign-name', campaignController.updateCampaignName);
 
-module.exports = router;
+  // Delete campaign
+  router.delete('/campaigns/:id', campaignController.deleteCampaign);
+  router.delete('/campaigns/:campaignId/billboards/:billboardId', campaignController.deleteBillboardFromCampaign);
+
+  return router;
+};
 
 
 

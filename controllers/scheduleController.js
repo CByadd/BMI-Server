@@ -5,6 +5,19 @@ exports.getAllSchedules = async (req, res) => {
   try {
     let schedules = [];
     try {
+      // Ensure table exists safely before querying
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS schedules (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          description TEXT,
+          events TEXT,
+          status VARCHAR(50) DEFAULT 'active',
+          created_at TIMESTAMP,
+          updated_at TIMESTAMP
+        )
+      `);
+
       schedules = await prisma.$queryRaw`
         SELECT * FROM schedules ORDER BY updated_at DESC
       `;
@@ -15,14 +28,14 @@ exports.getAllSchedules = async (req, res) => {
     // Transform database results to match frontend format
     const formattedSchedules = schedules.map((schedule) => {
       const events = schedule.events ? JSON.parse(schedule.events) : [];
-      
+
       // Calculate time ago
       const updatedAt = new Date(schedule.updated_at);
       const timeDiff = Date.now() - updatedAt.getTime();
       const minutesAgo = Math.floor(timeDiff / (1000 * 60));
       const hoursAgo = Math.floor(timeDiff / (1000 * 60 * 60));
       const daysAgo = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-      
+
       let lastUpdated = "";
       if (minutesAgo < 60) {
         lastUpdated = `${minutesAgo} ${minutesAgo === 1 ? 'min' : 'mins'} ago`;
@@ -53,9 +66,22 @@ exports.getAllSchedules = async (req, res) => {
 exports.getScheduleById = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     let schedule = null;
     try {
+      // Ensure table exists safely before querying
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS schedules (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          description TEXT,
+          events TEXT,
+          status VARCHAR(50) DEFAULT 'active',
+          created_at TIMESTAMP,
+          updated_at TIMESTAMP
+        )
+      `);
+
       const results = await prisma.$queryRaw`
         SELECT * FROM schedules WHERE id = ${id}
       `;
@@ -90,7 +116,7 @@ exports.getScheduleById = async (req, res) => {
 exports.createSchedule = async (req, res) => {
   try {
     const { name, description, events } = req.body;
-    
+
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Schedule name is required' });
     }
@@ -120,7 +146,7 @@ exports.createSchedule = async (req, res) => {
       const escapedName = name.replace(/'/g, "''");
       const escapedDescription = (description || '').replace(/'/g, "''");
       const escapedEvents = JSON.stringify(eventsArray).replace(/'/g, "''");
-      
+
       const insertQuery = `
         INSERT INTO schedules (id, name, description, events, status, created_at, updated_at)
         VALUES ('${id.replace(/'/g, "''")}', '${escapedName}', '${escapedDescription}', '${escapedEvents}', 'active', NOW(), NOW())
