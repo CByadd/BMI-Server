@@ -46,12 +46,32 @@ async function isPlaylistAssetAvailable(slot) {
     return false;
   }
 
+  const managedMediaId = extractManagedMediaId(assetUrl);
+  if (managedMediaId) {
+    try {
+      const mediaRows = await prisma.$queryRawUnsafe(
+        'SELECT id, path FROM media WHERE id = $1 LIMIT 1',
+        String(managedMediaId)
+      );
+      const mediaRow = Array.isArray(mediaRows) ? mediaRows[0] : null;
+      if (!mediaRow || !mediaRow.path) {
+        return false;
+      }
+
+      const fullPath = path.join(ASSETS_DIR, String(mediaRow.path).replace(/\//g, path.sep));
+      return fs.existsSync(fullPath);
+    } catch (error) {
+      console.warn('[ASSETS] Failed to validate managed media row:', managedMediaId, error.message);
+      return true;
+    }
+  }
+
   const ownAssetPath = tryResolveOwnAssetPath(assetUrl);
   if (ownAssetPath) {
     return fs.existsSync(ownAssetPath);
   }
 
-  const mediaId = slot.id || slot.publicId || slot.mediaId || extractManagedMediaId(assetUrl) || null;
+  const mediaId = slot.id || slot.publicId || slot.mediaId || null;
   if (!mediaId) {
     // External URLs are treated as valid here because the server cannot
     // cheaply guarantee their reachability at playlist fetch time.
