@@ -58,13 +58,18 @@ async function ensureManagedMediaTable() {
     }
 }
 
-function buildManagedScreenAssetLocation({ mediaId, originalName, screenId, slotIndex }) {
+function buildManagedScreenAssetLocation({ mediaId, originalName, screenId, assetKind, slotIndex = null }) {
     const base = path.basename(originalName || 'image.png');
     const ext = path.extname(base) || '.png';
-    const name = path.basename(base, ext) || `flow-${screenId}-${slotIndex + 1}`;
-    const safe = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || `flow-${screenId}-${slotIndex + 1}`;
+    const fallbackName = assetKind === 'logo'
+        ? `logo-${screenId}`
+        : `flow-${screenId}-${Number(slotIndex) + 1}`;
+    const name = path.basename(base, ext) || fallbackName;
+    const safe = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || fallbackName;
     const filename = `${mediaId}-${safe}${ext.toLowerCase()}`;
-    const relativePath = path.join('media', 'screens', String(screenId), 'flow-drawer', 'images', filename).replace(/\\/g, '/');
+    const relativePath = assetKind === 'logo'
+        ? path.join('media', 'screens', String(screenId), 'logo', 'images', filename).replace(/\\/g, '/')
+        : path.join('media', 'screens', String(screenId), 'flow-drawer', 'images', filename).replace(/\\/g, '/');
     const absolutePath = path.join(ASSETS_DIR, relativePath.replace(/\//g, path.sep));
 
     return {
@@ -75,7 +80,7 @@ function buildManagedScreenAssetLocation({ mediaId, originalName, screenId, slot
     };
 }
 
-async function saveFlowDrawerAssetManaged({ buffer, originalName, mimetype, size, screenId, slotIndex }) {
+async function saveScreenAssetManaged({ buffer, originalName, mimetype, size, screenId, assetKind, slotIndex = null }) {
     ensureAssetDirs();
     await ensureManagedMediaTable();
 
@@ -84,6 +89,7 @@ async function saveFlowDrawerAssetManaged({ buffer, originalName, mimetype, size
         mediaId,
         originalName,
         screenId,
+        assetKind,
         slotIndex
     });
 
@@ -104,10 +110,14 @@ async function saveFlowDrawerAssetManaged({ buffer, originalName, mimetype, size
         managedLocation.url,
         size || null,
         mimetype ? String(mimetype).split('/')[1] : null,
-        JSON.stringify([`screen:${screenId}`, `flow-drawer`, `slot:${slotIndex + 1}`])
+        JSON.stringify(
+            assetKind === 'logo'
+                ? [`screen:${screenId}`, 'logo']
+                : [`screen:${screenId}`, 'flow-drawer', `slot:${slotIndex + 1}`]
+        )
     );
 
-    console.log('[ADSCAPE] Saved managed flow drawer asset to:', managedLocation.absolutePath);
+    console.log(`[ADSCAPE] Saved managed ${assetKind} asset to:`, managedLocation.absolutePath);
     return managedLocation.url;
 }
 
@@ -726,13 +736,17 @@ exports.uploadLogo = async (req, res) => {
             return res.status(404).json({ error: 'Player not found' });
         }
 
+        await deleteManagedMediaByUrl(player.logoUrl);
         deleteAssetFileByUrl(player.logoUrl);
 
-        const logoUrlNew = saveBufferToAssets(
-            req.file.buffer,
-            req.file.originalname,
-            `logo-${String(screenId)}-`
-        );
+        const logoUrlNew = await saveScreenAssetManaged({
+            buffer: req.file.buffer,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            screenId: String(screenId),
+            assetKind: 'logo'
+        });
 
         const updatedPlayer = await prisma.adscapePlayer.update({
             where: { screenId: String(screenId) },
@@ -815,6 +829,7 @@ exports.deleteLogo = async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Player not found' });
         }
 
+        await deleteManagedMediaByUrl(player.logoUrl);
         deleteAssetFileByUrl(player.logoUrl);
 
         // Update player to remove logoUrl
@@ -897,12 +912,13 @@ exports.uploadFlowDrawerImage = async (req, res) => {
         await deleteManagedMediaByUrl(oldImageUrl);
         deleteAssetFileByUrl(oldImageUrl);
 
-        const imageUrlNew = await saveFlowDrawerAssetManaged({
+        const imageUrlNew = await saveScreenAssetManaged({
             buffer: req.file.buffer,
             originalName: req.file.originalname,
             mimetype: req.file.mimetype,
             size: req.file.size,
             screenId: String(screenId),
+            assetKind: 'flow-drawer',
             slotIndex
         });
 
