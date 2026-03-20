@@ -2,7 +2,8 @@ const { PrismaClient, Prisma } = require('@prisma/client');
 const prisma = new PrismaClient();
 const fs = require('fs');
 const path = require('path');
-const { ASSETS_DIR, ASSET_BASE_URL, TYPES, ensureAssetDirs, getTypeDir, safeFilename, assetUrl } = require('../config/assets');
+const crypto = require('crypto');
+const { ASSETS_DIR, ASSET_BASE_URL, TYPES, ensureAssetDirs, getTypeDir, safeFilename, assetUrl, ensureDir, managedMediaUrl } = require('../config/assets');
 
 function isOwnAssetUrl(url) {
     if (!url || typeof url !== 'string') return false;
@@ -22,6 +23,117 @@ function deleteAssetFileByUrl(url) {
         }
     } catch (e) {
         console.error('[ADSCAPE] Error deleting local asset:', e.message);
+    }
+}
+
+function parseManagedMediaUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+    const base = (process.env.ASSET_BASE_URL || 'https://api.well2day.in/assets').replace(/\/$/, '');
+    const match = url.match(new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/media/([^/]+)/`));
+    return match ? String(match[1]) : null;
+}
+
+async function ensureManagedMediaTable() {
+    try {
+        await prisma.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
+        await prisma.$executeRawUnsafe(`
+            CREATE TABLE IF NOT EXISTS media (
+                id VARCHAR(36) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                type VARCHAR(20) NOT NULL,
+                path VARCHAR(512) NOT NULL,
+                url TEXT NOT NULL,
+                size BIGINT,
+                format VARCHAR(20),
+                duration FLOAT,
+                created_by UUID,
+                created_at TIMESTAMP DEFAULT NOW(),
+                tags TEXT,
+                folder_id UUID
+            )
+        `);
+    } catch (e) {
+        console.error('[ADSCAPE] Failed to ensure media table:', e.message);
+        throw e;
+    }
+}
+
+function buildManagedScreenAssetLocation({ mediaId, originalName, screenId, slotIndex }) {
+    const base = path.basename(originalName || 'image.png');
+    const ext = path.extname(base) || '.png';
+    const name = path.basename(base, ext) || `flow-${screenId}-${slotIndex + 1}`;
+    const safe = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || `flow-${screenId}-${slotIndex + 1}`;
+    const filename = `${mediaId}-${safe}${ext.toLowerCase()}`;
+    const relativePath = path.join('media', 'screens', String(screenId), 'flow-drawer', 'images', filename).replace(/\\/g, '/');
+    const absolutePath = path.join(ASSETS_DIR, relativePath.replace(/\//g, path.sep));
+
+    return {
+        filename,
+        relativePath,
+        absolutePath,
+        url: managedMediaUrl(mediaId, filename)
+    };
+}
+
+async function saveFlowDrawerAssetManaged({ buffer, originalName, mimetype, size, screenId, slotIndex }) {
+    ensureAssetDirs();
+    await ensureManagedMediaTable();
+
+    const mediaId = crypto.randomUUID();
+    const managedLocation = buildManagedScreenAssetLocation({
+        mediaId,
+        originalName,
+        screenId,
+        slotIndex
+    });
+
+    ensureDir(path.dirname(managedLocation.absolutePath));
+    fs.writeFileSync(managedLocation.absolutePath, buffer);
+
+    if (!fs.existsSync(managedLocation.absolutePath)) {
+        throw new Error(`Managed asset write did not persist: ${managedLocation.absolutePath}`);
+    }
+
+    await prisma.$executeRawUnsafe(
+        `INSERT INTO media (id, name, type, path, url, size, format, duration, created_by, tags, folder_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, $8, NULL)`,
+        mediaId,
+        originalName || managedLocation.filename,
+        'image',
+        managedLocation.relativePath,
+        managedLocation.url,
+        size || null,
+        mimetype ? String(mimetype).split('/')[1] : null,
+        JSON.stringify([`screen:${screenId}`, `flow-drawer`, `slot:${slotIndex + 1}`])
+    );
+
+    console.log('[ADSCAPE] Saved managed flow drawer asset to:', managedLocation.absolutePath);
+    return managedLocation.url;
+}
+
+async function deleteManagedMediaByUrl(url) {
+    const mediaId = parseManagedMediaUrl(url);
+    if (!mediaId) return false;
+
+    try {
+        const row = await prisma.$queryRawUnsafe(
+            'SELECT id, path FROM media WHERE id = $1 LIMIT 1',
+            mediaId
+        ).then((result) => (result && result[0]) || null);
+
+        if (!row) return false;
+
+        const fullPath = path.join(ASSETS_DIR, String(row.path).replace(/\//g, path.sep));
+        if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+            console.log('[ADSCAPE] Deleted managed asset:', fullPath);
+        }
+
+        await prisma.$executeRawUnsafe('DELETE FROM media WHERE id = $1', mediaId);
+        return true;
+    } catch (e) {
+        console.error('[ADSCAPE] Error deleting managed asset:', e.message);
+        return false;
     }
 }
 
@@ -782,13 +894,17 @@ exports.uploadFlowDrawerImage = async (req, res) => {
             return res.status(400).json({ ok: false, error: `Image number must be between 1 and ${Math.min(slotCount, 5)}` });
         }
 
+        await deleteManagedMediaByUrl(oldImageUrl);
         deleteAssetFileByUrl(oldImageUrl);
 
-        const imageUrlNew = saveBufferToAssets(
-            req.file.buffer,
-            req.file.originalname,
-            `flow-${String(screenId)}-${slotIndex + 1}-`
-        );
+        const imageUrlNew = await saveFlowDrawerAssetManaged({
+            buffer: req.file.buffer,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            screenId: String(screenId),
+            slotIndex
+        });
 
         const fieldMap = {
             0: 'flowDrawerImage1Url',
@@ -979,6 +1095,7 @@ exports.deleteFlowDrawerImage = async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Flow drawer image not found' });
         }
 
+        await deleteManagedMediaByUrl(imageUrl);
         deleteAssetFileByUrl(imageUrl);
 
         // Determine which field to clear based on slot index
