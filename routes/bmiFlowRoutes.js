@@ -28,6 +28,9 @@ module.exports = (io) => {
     // POST /api/bmi/:id/link-user -> Link BMI record to user
     router.post('/bmi/:id/link-user', bmiFlowController.linkUserToBMI);
 
+    // POST /api/bmi/:id/expire-link -> Expire QR/web link after flow completion
+    router.post('/bmi/:id/expire-link', bmiFlowController.expireBMILink);
+
     // GET /api/bmi/:id -> Return stored payload
     router.get('/bmi/:id', bmiFlowController.getBMI);
 

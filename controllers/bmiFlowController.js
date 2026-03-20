@@ -8,6 +8,31 @@ const { sendWellTemplate } = require('../services/convoboxWhatsAppService');
 // In-memory store for BMI data
 const bmiStore = new Map(); // bmiId -> payload
 
+async function ensureWebLinkExpiryColumn() {
+    try {
+        await prisma.$executeRawUnsafe(`
+            ALTER TABLE "BMI"
+            ADD COLUMN IF NOT EXISTS "webLinkExpired" BOOLEAN DEFAULT false
+        `);
+    } catch (error) {
+        console.warn('[BMI] Failed to ensure webLinkExpired column:', error.message);
+    }
+}
+
+async function getWebLinkExpiredFlag(bmiId) {
+    await ensureWebLinkExpiryColumn();
+    try {
+        const rows = await prisma.$queryRawUnsafe(
+            `SELECT COALESCE("webLinkExpired", false) AS "webLinkExpired" FROM "BMI" WHERE id = $1::uuid LIMIT 1`,
+            bmiId
+        );
+        return Boolean(rows?.[0]?.webLinkExpired);
+    } catch (error) {
+        console.warn('[BMI] Failed to read webLinkExpired flag:', error.message);
+        return false;
+    }
+}
+
 /**
  * Generate fortune message using Grok API
  */
@@ -1280,6 +1305,17 @@ exports.getBMI = async (req, res) => {
     console.log(`[BMI] GET request for id: ${id}`);
     
     try {
+        const webLinkExpired = await getWebLinkExpiredFlag(id);
+        if (webLinkExpired) {
+            console.log(`[BMI] Link already expired for id: ${id}`);
+            return res.status(410).json({
+                error: 'link_expired',
+                message: 'This BMI result link has already been used.',
+                redirectTo: '/dashboard',
+                bmiId: id
+            });
+        }
+
         // Try in-memory store first
         const mem = bmiStore.get(id);
         if (mem) {
@@ -1304,7 +1340,7 @@ exports.getBMI = async (req, res) => {
                 id: id
             });
         }
-        
+
         const result = {
             bmiId: row.id,
             screenId: row.screenId,
@@ -1318,6 +1354,7 @@ exports.getBMI = async (req, res) => {
             fortuneMessage: row.fortune,
             healthTip: row.healthTip ?? null,
             userId: row.userId,
+            paymentStatus: row.paymentStatus ?? false,
             user: row.user ? {
                 id: row.user.id,
                 name: row.user.name,
@@ -1334,6 +1371,27 @@ exports.getBMI = async (req, res) => {
             message: e.message,
             stack: e.stack
         });
+    }
+};
+
+/**
+ * POST /api/bmi/:id/expire-link -> expire QR/web link after flow completion
+ */
+exports.expireBMILink = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        await ensureWebLinkExpiryColumn();
+        await prisma.$executeRawUnsafe(
+            `UPDATE "BMI" SET "webLinkExpired" = true WHERE id = $1::uuid`,
+            id
+        );
+
+        console.log(`[BMI] Web link expired for id: ${id}`);
+        return res.json({ ok: true, bmiId: id, webLinkExpired: true });
+    } catch (e) {
+        console.error('[BMI] Failed to expire BMI link:', e);
+        return res.status(500).json({ error: 'internal_error' });
     }
 };
 
