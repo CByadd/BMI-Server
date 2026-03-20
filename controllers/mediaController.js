@@ -167,6 +167,13 @@ module.exports = (io) => {
       }
 
       const { name, tags, folderId } = req.body || {};
+      let fileMetadata = [];
+      try {
+        fileMetadata = req.body?.fileMetadata ? JSON.parse(req.body.fileMetadata) : [];
+      } catch (error) {
+        console.warn('[MEDIA] Failed to parse fileMetadata payload:', error.message);
+        fileMetadata = [];
+      }
       const tagArray = tags ? String(tags).split(',').map(t => t.trim()).filter(Boolean) : [];
       const adminId = req.user?.id || null;
       const userRole = req.user?.role || 'admin';
@@ -191,13 +198,24 @@ module.exports = (io) => {
 
       const uploadedMedia = [];
 
-      for (const file of req.files) {
+      for (const [index, file] of req.files.entries()) {
         try {
           const resourceType = getTypeFromMimetype(file.mimetype);
           if (!file.path) {
             console.error('[MEDIA] File has no temp path:', file.originalname);
             continue;
           }
+
+          const metadata = Array.isArray(fileMetadata)
+            ? fileMetadata.find((item) =>
+                Number(item?.index) === index &&
+                String(item?.originalName || '') === String(file.originalname || '') &&
+                Number(item?.size) === Number(file.size || 0)
+              ) || null
+            : null;
+          const parsedDuration = metadata && Number.isFinite(Number(metadata.duration)) && Number(metadata.duration) > 0
+            ? Number(metadata.duration)
+            : null;
 
           const id = uuidv4();
           const managedLocation = await buildManagedMediaLocation({
@@ -217,7 +235,7 @@ module.exports = (io) => {
             url: managedLocation.url,
             size: file.size || null,
             format: file.mimetype ? file.mimetype.split('/')[1] : null,
-            duration: null,
+            duration: resourceType === 'videos' ? parsedDuration : null,
             created_by: adminId,
             tags: JSON.stringify(tagArray),
             folder_id: folderId || null,

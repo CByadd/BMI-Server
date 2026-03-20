@@ -50,16 +50,14 @@ async function isPlaylistAssetAvailable(slot) {
   if (managedMediaId) {
     try {
       const mediaRows = await prisma.$queryRawUnsafe(
-        'SELECT id, path FROM media WHERE id = $1 LIMIT 1',
+        'SELECT id, path, url FROM media WHERE id = $1 LIMIT 1',
         String(managedMediaId)
       );
       const mediaRow = Array.isArray(mediaRows) ? mediaRows[0] : null;
-      if (!mediaRow || !mediaRow.path) {
+      if (!mediaRow) {
         return false;
       }
-
-      const fullPath = path.join(ASSETS_DIR, String(mediaRow.path).replace(/\//g, path.sep));
-      return fs.existsSync(fullPath);
+      return true
     } catch (error) {
       console.warn('[ASSETS] Failed to validate managed media row:', managedMediaId, error.message);
       return true;
@@ -68,7 +66,9 @@ async function isPlaylistAssetAvailable(slot) {
 
   const ownAssetPath = tryResolveOwnAssetPath(assetUrl);
   if (ownAssetPath) {
-    return fs.existsSync(ownAssetPath);
+    // These URLs are served successfully by Nginx in production, so do not
+    // reject them here based on the Node process's local filesystem view.
+    return true;
   }
 
   const mediaId = slot.id || slot.publicId || slot.mediaId || null;
