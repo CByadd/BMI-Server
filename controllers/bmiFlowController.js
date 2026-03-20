@@ -19,8 +19,9 @@ async function generateFortuneMessage(bmiData) {
       return generateFallbackFortune(bmiData);
     }
 
-    const prompt = `Generate a positive, motivational fortune cookie message for someone with BMI ${bmiData.bmi} (${bmiData.category}). 
-    Keep it short (1-2 sentences), uplifting, and health-focused. Don't mention specific BMI numbers.`;
+    const prompt = bmiData?.isHeightValid
+      ? `Generate a positive, motivational fortune cookie message for someone with BMI ${bmiData.bmi} (${bmiData.category}). Keep it short (1-2 sentences), uplifting, and health-focused. Don't mention specific BMI numbers.`
+      : `Generate a positive, motivational health message for someone who has just completed a weight check. Keep it short (1-2 sentences), uplifting, and focused on healthy habits. Do not mention BMI.`;
     
     const response = await axios.post('https://api.x.ai/v1/chat/completions', {
       model: 'grok-beta',
@@ -164,6 +165,9 @@ function calculateStreak(bmiRecords) {
 exports.createBMI = async (req, res, io) => {
     try {
 		const { heightCm, weightKg, screenId, appVersion, fortune: bodyFortune, healthTip: bodyHealthTip } = req.body || {};
+        const parsedHeightCm = Number(heightCm || 0);
+        const parsedWeightKg = Number(weightKg);
+        const isHeightValid = Number.isFinite(parsedHeightCm) && parsedHeightCm > 0;
 		const flowStartTime = new Date().toISOString();
 		
 		// ========== PAYMENT FLOW LOGGING - FLOW STARTED (SERVER) ==========
@@ -177,9 +181,9 @@ exports.createBMI = async (req, res, io) => {
 		console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
 		console.log('═══════════════════════════════════════════════════════════════');
 		
-		if (!heightCm || !weightKg || !screenId) {
+		if (!parsedWeightKg || !screenId) {
 			console.log('[PAYMENT_FLOW] ❌ Validation failed - missing required fields');
-			return res.status(400).json({ error: 'heightCm, weightKg, screenId required' });
+			return res.status(400).json({ error: 'weightKg and screenId required' });
 		}
 		
 		// Get the registered player's flow type from database
@@ -194,24 +198,27 @@ exports.createBMI = async (req, res, io) => {
 			console.log('[BMI] Could not fetch player flow type:', e.message);
 		}
 		
-		const { bmi, category } = computeBMI(heightCm, weightKg);
+		const { bmi, category } = isHeightValid
+            ? computeBMI(parsedHeightCm, parsedWeightKg)
+            : { bmi: null, category: 'weight_only' };
 		const bmiId = uuidv4();
 		const timestamp = new Date().toISOString();
 		// Fortune: use client-provided (Android local pick) when present, else generate for F2, else null for F1/F3
         const effectiveFlowType = playerFlowType || appVersion;
         const clientFortune = (bodyFortune != null && String(bodyFortune).trim()) ? String(bodyFortune).trim() : null;
-        const fortune = clientFortune ?? ((effectiveFlowType === 'F2' || effectiveFlowType === 'f2') ? await generateFortuneMessage({ bmi, category }) : null);
+        const fortune = clientFortune ?? ((effectiveFlowType === 'F2' || effectiveFlowType === 'f2') ? await generateFortuneMessage({ bmi, category, isHeightValid }) : null);
         const healthTip = (bodyHealthTip != null && String(bodyHealthTip).trim()) ? String(bodyHealthTip).trim() : null;
         console.log('[BMI] Effective flow type:', effectiveFlowType, 'fortune:', clientFortune ? 'from client' : !!fortune, 'healthTip:', !!healthTip);
         
 		const payload = {
 			bmiId,
 			screenId: String(screenId),
-			height: Number(heightCm),
-			weight: Number(weightKg),
+			height: isHeightValid ? parsedHeightCm : 0,
+			weight: parsedWeightKg,
 			bmi,
-			category,
+			category: isHeightValid ? category : 'Weight Only',
 			timestamp,
+            isHeightValid,
 			fortune
 		};
         bmiStore.set(bmiId, payload);
@@ -227,10 +234,10 @@ exports.createBMI = async (req, res, io) => {
             data: {
                 id: bmiId,
                 screenId: String(screenId),
-                heightCm: Number(heightCm),
-                weightKg: Number(weightKg),
-                bmi: Number(bmi),
-                category,
+                heightCm: isHeightValid ? parsedHeightCm : 0,
+                weightKg: parsedWeightKg,
+                bmi: bmi != null ? Number(bmi) : 0,
+                category: isHeightValid ? category : 'Weight Only',
                 timestamp: new Date(timestamp),
                 deviceId: req.body.deviceId || null,
                 appVersion: appVersion || null,
@@ -253,7 +260,7 @@ exports.createBMI = async (req, res, io) => {
         console.log('═══════════════════════════════════════════════════════════════');
         console.log('[PAYMENT_FLOW] ✅ BMI RECORD CREATED (SERVER)');
         console.log('[PAYMENT_FLOW] BMI ID:', bmiId);
-        console.log('[PAYMENT_FLOW] BMI:', bmi, '(', category, ')');
+        console.log('[PAYMENT_FLOW] BMI:', bmi, '(', isHeightValid ? category : 'Weight Only', ')');
         console.log('[PAYMENT_FLOW] Web URL:', webUrl);
         console.log('[PAYMENT_FLOW] Effective Flow Type:', effectiveFlowType);
         console.log('[PAYMENT_FLOW] Fortune Generated:', !!fortune);
@@ -1303,9 +1310,10 @@ exports.getBMI = async (req, res) => {
             screenId: row.screenId,
             height: row.heightCm,
             weight: row.weightKg,
-            bmi: row.bmi,
+            bmi: row.heightCm > 0 ? row.bmi : null,
             category: row.category,
             timestamp: row.timestamp.toISOString(),
+            isHeightValid: row.heightCm > 0,
             fortune: row.fortune,
             fortuneMessage: row.fortune,
             healthTip: row.healthTip ?? null,
