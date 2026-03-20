@@ -25,6 +25,19 @@ function tryResolveOwnAssetPath(assetUrl) {
   return path.join(ASSETS_DIR, relativePath);
 }
 
+function extractManagedMediaId(assetUrl) {
+  if (!assetUrl || typeof assetUrl !== 'string') return null;
+
+  const baseUrl = normalizeAssetBaseUrl();
+  if (!baseUrl || !assetUrl.startsWith(`${baseUrl}/media/`)) {
+    return null;
+  }
+
+  const rest = assetUrl.slice(`${baseUrl}/media/`.length);
+  const mediaId = rest.split('/')[0];
+  return mediaId ? decodeURIComponent(mediaId) : null;
+}
+
 async function isPlaylistAssetAvailable(slot) {
   if (!slot || typeof slot !== 'object') return false;
 
@@ -38,7 +51,7 @@ async function isPlaylistAssetAvailable(slot) {
     return fs.existsSync(ownAssetPath);
   }
 
-  const mediaId = slot.id || slot.publicId || slot.mediaId || null;
+  const mediaId = slot.id || slot.publicId || slot.mediaId || extractManagedMediaId(assetUrl) || null;
   if (!mediaId) {
     // External URLs are treated as valid here because the server cannot
     // cheaply guarantee their reachability at playlist fetch time.

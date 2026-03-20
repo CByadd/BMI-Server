@@ -4,8 +4,8 @@ const multer = require('multer');
 const { authenticateToken } = require('../middleware/authMiddleware');
 const {
   getTypeFromMimetype,
-  getTypeDir,
   ensureAssetDirs,
+  getTempUploadsDir,
   safeFilename,
 } = require('../config/assets');
 
@@ -13,11 +13,11 @@ ensureAssetDirs();
 
 const storage = multer.diskStorage({
   destination(req, file, cb) {
-    const type = getTypeFromMimetype(file.mimetype);
-    cb(null, getTypeDir(type));
+    cb(null, getTempUploadsDir());
   },
   filename(req, file, cb) {
-    cb(null, safeFilename(file.originalname));
+    const type = getTypeFromMimetype(file.mimetype);
+    cb(null, safeFilename(`${type}-${file.originalname}`));
   },
 });
 

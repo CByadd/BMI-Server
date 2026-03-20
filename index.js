@@ -260,6 +260,8 @@ setInterval(logSocketStatus, SOCKET_STATUS_INTERVAL_MS);
 
 // Serve static assets from ASSETS_DIR at /assets (for local dev; in production Nginx typically serves https://api.well2day.in/assets from /var/www/assets)
 const ASSETS_DIR = process.env.ASSETS_DIR || '/var/www/assets';
+const mediaAssetController = require('./controllers/mediaController')(null);
+app.get('/assets/media/:mediaId/:filename', mediaAssetController.serveMediaAsset);
 app.use('/assets', express.static(ASSETS_DIR));
 
 // Health

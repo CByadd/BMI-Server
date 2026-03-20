@@ -5,9 +5,10 @@ const path = require('path');
 const prisma = new PrismaClient();
 const {
   ASSETS_DIR,
+  ensureDir,
   getTypeFromMimetype,
   ensureAssetDirs,
-  assetUrl,
+  managedMediaUrl,
 } = require('../config/assets');
 
 const MEDIA_TABLE = 'media';
@@ -71,12 +72,90 @@ async function ensureMediaTable() {
   }
 }
 
+async function getFolderPathSegments(folderId) {
+  if (!folderId) return ['root'];
+
+  const segments = [];
+  let currentId = String(folderId);
+
+  while (currentId) {
+    const rows = await prisma.$queryRawUnsafe(
+      'SELECT id, parent_id FROM media_folders WHERE id = $1::uuid LIMIT 1',
+      currentId
+    );
+
+    if (!rows || rows.length === 0) break;
+
+    const folder = rows[0];
+    segments.unshift(String(folder.id));
+    currentId = folder.parent_id ? String(folder.parent_id) : null;
+  }
+
+  return segments.length > 0 ? segments : ['root'];
+}
+
+async function buildManagedMediaLocation({ mediaId, originalName, resourceType, folderId }) {
+  const base = path.basename(originalName || 'file');
+  const ext = path.extname(base) || '';
+  const name = path.basename(base, ext) || 'file';
+  const safe = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100) || 'file';
+  const filename = `${mediaId}-${safe}${ext.toLowerCase()}`;
+  const folderSegments = await getFolderPathSegments(folderId);
+  const relativePath = path.join('media', ...folderSegments, resourceType, filename).replace(/\\/g, '/');
+  const absolutePath = path.join(ASSETS_DIR, relativePath.replace(/\//g, path.sep));
+
+  return {
+    filename,
+    relativePath,
+    absolutePath,
+    url: managedMediaUrl(mediaId, filename),
+  };
+}
+
+function cleanupFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return;
+  try {
+    fs.unlinkSync(filePath);
+  } catch (error) {
+    console.error('[MEDIA] Failed to remove file:', filePath, error.message);
+  }
+}
+
+async function relocateMediaFile(mediaRow, folderId) {
+  const currentFullPath = path.join(ASSETS_DIR, String(mediaRow.path).replace(/\//g, path.sep));
+  if (!fs.existsSync(currentFullPath)) {
+    return {
+      path: mediaRow.path,
+      url: mediaRow.url,
+    };
+  }
+
+  const inferredType = mediaRow.type === 'video' ? 'videos' : mediaRow.type === 'image' ? 'images' : 'files';
+  const managedLocation = await buildManagedMediaLocation({
+    mediaId: mediaRow.id,
+    originalName: mediaRow.name || path.basename(String(mediaRow.path)),
+    resourceType: inferredType,
+    folderId: folderId || null,
+  });
+
+  ensureDir(path.dirname(managedLocation.absolutePath));
+  fs.renameSync(currentFullPath, managedLocation.absolutePath);
+
+  return {
+    path: managedLocation.relativePath,
+    url: managedLocation.url,
+  };
+}
+
 module.exports = (io) => {
   const exports = {};
 
   /**
-   * Upload media files to local storage under ASSETS_DIR/<type>/
-   * No compression or transformation. Returns URLs: ASSET_BASE_URL/<type>/<filename>
+   * Upload media files into managed folder-aware storage under:
+   * ASSETS_DIR/media/<folder-chain>/<type>/<media-id>-<filename>
+   *
+   * Public URLs stay stable as:
+   * ASSET_BASE_URL/media/<media-id>/<filename>
    */
   exports.uploadMedia = async (req, res) => {
     try {
@@ -90,30 +169,52 @@ module.exports = (io) => {
       const { name, tags, folderId } = req.body || {};
       const tagArray = tags ? String(tags).split(',').map(t => t.trim()).filter(Boolean) : [];
       const adminId = req.user?.id || null;
+      const userRole = req.user?.role || 'admin';
       if (adminId) tagArray.push(`admin:${adminId}`);
+
+      if (folderId) {
+        const folderRows = await prisma.$queryRawUnsafe(
+          'SELECT id, created_by FROM media_folders WHERE id = $1::uuid LIMIT 1',
+          folderId
+        );
+
+        if (!folderRows || folderRows.length === 0) {
+          return res.status(400).json({ error: 'Selected folder does not exist' });
+        }
+
+        const folder = folderRows[0];
+        const ownerId = folder.created_by != null ? String(folder.created_by) : null;
+        if (userRole !== 'super_admin' && adminId && ownerId !== String(adminId)) {
+          return res.status(403).json({ error: 'You can only upload into folders you created' });
+        }
+      }
 
       const uploadedMedia = [];
 
       for (const file of req.files) {
         try {
           const resourceType = getTypeFromMimetype(file.mimetype);
-          const relPath = file.path ? path.relative(ASSETS_DIR, file.path) : null;
-          if (!relPath) {
-            console.error('[MEDIA] File has no path (multer disk did not set path):', file.originalname);
+          if (!file.path) {
+            console.error('[MEDIA] File has no temp path:', file.originalname);
             continue;
           }
-          const pathSegs = relPath.split(path.sep);
-          const typeDir = pathSegs[0];
-          const filename = pathSegs.slice(1).join(path.sep) || file.filename || path.basename(file.originalname);
-          const url = assetUrl(typeDir, filename);
 
           const id = uuidv4();
+          const managedLocation = await buildManagedMediaLocation({
+            mediaId: id,
+            originalName: file.originalname,
+            resourceType,
+            folderId: folderId || null,
+          });
+          ensureDir(path.dirname(managedLocation.absolutePath));
+          fs.renameSync(file.path, managedLocation.absolutePath);
+
           const mediaRow = {
             id,
-            name: name || file.originalname || filename,
+            name: name || file.originalname || managedLocation.filename,
             type: resourceType === 'images' ? 'image' : resourceType === 'videos' ? 'video' : 'file',
-            path: relPath.replace(/\\/g, '/'),
-            url,
+            path: managedLocation.relativePath,
+            url: managedLocation.url,
             size: file.size || null,
             format: file.mimetype ? file.mimetype.split('/')[1] : null,
             duration: null,
@@ -154,9 +255,10 @@ module.exports = (io) => {
             createdAt: new Date().toISOString(),
           };
           uploadedMedia.push(item);
-          console.log('[MEDIA] Uploaded', file.originalname, '→', url);
+          console.log('[MEDIA] Uploaded', file.originalname, '→', managedLocation.url);
         } catch (err) {
           console.error('[MEDIA] Error uploading', file.originalname, err);
+          cleanupFile(file.path);
         }
       }
 
@@ -326,7 +428,7 @@ module.exports = (io) => {
 
       // Check if media exists and user has permission
       const row = await prisma.$queryRawUnsafe(
-        'SELECT id, created_by FROM media WHERE id = $1 LIMIT 1',
+        'SELECT id, created_by, path, url, type, name FROM media WHERE id = $1 LIMIT 1',
         mediaId
       ).then((r) => (r && r[0]) || null);
 
@@ -338,9 +440,13 @@ module.exports = (io) => {
         return res.status(403).json({ error: 'You can only move media files you uploaded' });
       }
 
+      const relocated = await relocateMediaFile(row, folderId || null);
+
       await prisma.$executeRawUnsafe(
-        'UPDATE media SET folder_id = $1::uuid WHERE id = $2',
+        'UPDATE media SET folder_id = $1::uuid, path = $2, url = $3 WHERE id = $4',
         folderId || null,
+        relocated.path,
+        relocated.url,
         mediaId
       );
 
@@ -431,35 +537,67 @@ module.exports = (io) => {
       // Fetch to check permissions
       const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
       const rows = await prisma.$queryRawUnsafe(
-        `SELECT id, created_by FROM media WHERE id IN (${placeholders})`,
+        `SELECT id, created_by, path, url, type, name FROM media WHERE id IN (${placeholders})`,
         ...ids
       );
 
-      const allowedIds = rows
-        .filter(r => userRole === 'super_admin' || !adminId || r.created_by === adminId)
-        .map(r => r.id);
+      const allowedRows = rows
+        .filter(r => userRole === 'super_admin' || !adminId || r.created_by === adminId);
 
-      if (allowedIds.length > 0) {
-        const movePlaceholders = allowedIds.map((_, i) => `$${i + 2}`).join(',');
-        await prisma.$executeRawUnsafe(
-          `UPDATE media SET folder_id = $1::uuid WHERE id IN (${movePlaceholders})`,
-          folderId || null,
-          ...allowedIds
-        );
+      if (allowedRows.length > 0) {
+        for (const row of allowedRows) {
+          const relocated = await relocateMediaFile(row, folderId || null);
+          await prisma.$executeRawUnsafe(
+            'UPDATE media SET folder_id = $1::uuid, path = $2, url = $3 WHERE id = $4',
+            folderId || null,
+            relocated.path,
+            relocated.url,
+            row.id
+          );
+        }
 
         if (io) {
-          io.emit('assets-updated', { type: 'media', action: 'bulk-move', ids: allowedIds, folderId });
+          io.emit('assets-updated', { type: 'media', action: 'bulk-move', ids: allowedRows.map(r => r.id), folderId });
         }
       }
 
       res.json({ 
         ok: true, 
-        message: `Successfully moved ${allowedIds.length} media items`,
-        totalMoved: allowedIds.length
+        message: `Successfully moved ${allowedRows.length} media items`,
+        totalMoved: allowedRows.length
       });
     } catch (error) {
       console.error('[MEDIA] Bulk move error:', error);
       res.status(500).json({ error: 'Failed to bulk move media' });
+    }
+  };
+
+  exports.serveMediaAsset = async (req, res) => {
+    try {
+      const { mediaId } = req.params;
+
+      if (!mediaId) {
+        return res.status(400).json({ error: 'Media ID is required' });
+      }
+
+      const row = await prisma.$queryRawUnsafe(
+        'SELECT id, path, name FROM media WHERE id = $1 LIMIT 1',
+        String(mediaId)
+      ).then((r) => (r && r[0]) || null);
+
+      if (!row || !row.path) {
+        return res.status(404).json({ error: 'Media not found' });
+      }
+
+      const fullPath = path.join(ASSETS_DIR, String(row.path).replace(/\//g, path.sep));
+      if (!fs.existsSync(fullPath)) {
+        return res.status(404).json({ error: 'Media file not found on disk' });
+      }
+
+      return res.sendFile(fullPath);
+    } catch (error) {
+      console.error('[MEDIA] Serve asset error:', error);
+      return res.status(500).json({ error: 'Failed to serve media asset' });
     }
   };
 
