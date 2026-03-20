@@ -8,7 +8,7 @@ const multer = require('multer');
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB max file size for logos
+    fileSize: 4 * 1024 * 1024, // 4MB max file size for logos and flow drawer images
   },
   fileFilter: (req, file, cb) => {
     // Accept images only

@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const mediaController = require('../controllers/mediaController');
 const { authenticateToken } = require('../middleware/authMiddleware');
 const {
   getTypeFromMimetype,
@@ -43,6 +42,9 @@ module.exports = (io) => {
   router.post('/upload', authenticateToken, upload.array('files', 50), mediaController.uploadMedia);
   router.get('/', authenticateToken, mediaController.getAllMedia);
   router.delete('/delete', authenticateToken, mediaController.deleteMedia);
+  router.post('/move', authenticateToken, mediaController.moveMedia);
+  router.post('/bulk-delete', authenticateToken, mediaController.bulkDeleteMedia);
+  router.post('/bulk-move', authenticateToken, mediaController.bulkMoveMedia);
 
   return router;
 };

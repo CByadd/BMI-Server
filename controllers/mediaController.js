@@ -14,6 +14,22 @@ const MEDIA_TABLE = 'media';
 
 async function ensureMediaTable() {
   try {
+    // Ensure extension exists for uuid generation
+    await prisma.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
+    
+    // Ensure media_folders table exists
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS media_folders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        parent_id UUID REFERENCES media_folders(id) ON DELETE CASCADE,
+        created_by UUID,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Ensure media table exists with folder_id column
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS media (
         id VARCHAR(36) PRIMARY KEY,
@@ -26,14 +42,29 @@ async function ensureMediaTable() {
         duration FLOAT,
         created_by UUID,
         created_at TIMESTAMP DEFAULT NOW(),
-        tags TEXT
+        tags TEXT,
+        folder_id UUID REFERENCES media_folders(id) ON DELETE SET NULL
       )
     `);
+
+    // Add folder_id if it doesn't exist (for existing tables)
+    await prisma.$executeRawUnsafe(`
+      DO $$ 
+      BEGIN 
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='media' AND column_name='folder_id') THEN
+          ALTER TABLE media ADD COLUMN folder_id UUID REFERENCES media_folders(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+    `);
+
     await prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS idx_media_created_by ON media(created_by)
     `);
     await prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS idx_media_type ON media(type)
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS idx_media_folder_id ON media(folder_id)
     `);
   } catch (e) {
     console.error('[MEDIA] ensureMediaTable error:', e.message);
@@ -56,7 +87,7 @@ module.exports = (io) => {
         return res.status(400).json({ error: 'No files provided' });
       }
 
-      const { name, tags } = req.body || {};
+      const { name, tags, folderId } = req.body || {};
       const tagArray = tags ? String(tags).split(',').map(t => t.trim()).filter(Boolean) : [];
       const adminId = req.user?.id || null;
       if (adminId) tagArray.push(`admin:${adminId}`);
@@ -88,11 +119,12 @@ module.exports = (io) => {
             duration: null,
             created_by: adminId,
             tags: JSON.stringify(tagArray),
+            folder_id: folderId || null,
           };
 
           await prisma.$executeRawUnsafe(
-            `INSERT INTO media (id, name, type, path, url, size, format, duration, created_by, tags)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10)`,
+            `INSERT INTO media (id, name, type, path, url, size, format, duration, created_by, tags, folder_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11::uuid)`,
             mediaRow.id,
             mediaRow.name,
             mediaRow.type,
@@ -102,7 +134,8 @@ module.exports = (io) => {
             mediaRow.format,
             mediaRow.duration,
             mediaRow.created_by,
-            mediaRow.tags
+            mediaRow.tags,
+            mediaRow.folder_id
           );
 
           const item = {
@@ -117,6 +150,7 @@ module.exports = (io) => {
             size: mediaRow.size,
             duration: mediaRow.duration,
             tags: tagArray,
+            folderId: mediaRow.folder_id,
             createdAt: new Date().toISOString(),
           };
           uploadedMedia.push(item);
@@ -153,7 +187,7 @@ module.exports = (io) => {
   exports.getAllMedia = async (req, res) => {
     try {
       await ensureMediaTable();
-      const { type, search, tags } = req.query || {};
+      const { type, search, tags, folderId } = req.query || {};
       const adminId = req.user?.id || null;
       const userRole = req.user?.role || 'admin';
 
@@ -180,8 +214,17 @@ module.exports = (io) => {
         params.push(`%${String(search).trim()}%`);
       }
 
+      if (folderId && folderId !== 'all') {
+        p++;
+        where += ` AND folder_id = $${p}::uuid`;
+        params.push(folderId);
+      } else if (folderId !== 'all') {
+        // If folderId is not provided and not 'all', return root media
+        where += ` AND folder_id IS NULL`;
+      }
+
       const rows = await prisma.$queryRawUnsafe(
-        `SELECT id, name, type, path, url, size, format, duration, created_by, created_at, tags
+        `SELECT id, name, type, path, url, size, format, duration, created_by, created_at, tags, folder_id
          FROM media WHERE ${where} ORDER BY created_at DESC LIMIT 500`,
         ...params
       );
@@ -202,6 +245,7 @@ module.exports = (io) => {
           size: r.size != null ? Number(r.size) : null,
           duration: r.duration != null ? Number(r.duration) : null,
           tags: Array.isArray(tagsArr) ? tagsArr : [],
+          folderId: r.folder_id,
           created_at: r.created_at,
           createdAt: r.created_at,
           updatedAt: r.created_at,
@@ -264,6 +308,158 @@ module.exports = (io) => {
     } catch (error) {
       console.error('[MEDIA] Delete error:', error);
       res.status(500).json({ error: 'Failed to delete media' });
+    }
+  };
+
+  /**
+   * Move media to a different folder
+   */
+  exports.moveMedia = async (req, res) => {
+    try {
+      const { mediaId, folderId } = req.body || {};
+      const adminId = req.user?.id;
+      const userRole = req.user?.role;
+
+      if (!mediaId) {
+        return res.status(400).json({ error: 'Media ID is required' });
+      }
+
+      // Check if media exists and user has permission
+      const row = await prisma.$queryRawUnsafe(
+        'SELECT id, created_by FROM media WHERE id = $1 LIMIT 1',
+        mediaId
+      ).then((r) => (r && r[0]) || null);
+
+      if (!row) {
+        return res.status(404).json({ error: 'Media not found' });
+      }
+
+      if (userRole !== 'super_admin' && adminId && row.created_by !== adminId) {
+        return res.status(403).json({ error: 'You can only move media files you uploaded' });
+      }
+
+      await prisma.$executeRawUnsafe(
+        'UPDATE media SET folder_id = $1::uuid WHERE id = $2',
+        folderId || null,
+        mediaId
+      );
+
+      // Notify all players
+      if (io) {
+        io.emit('assets-updated', { type: 'media', action: 'move', id: mediaId, folderId });
+      }
+
+      res.json({ ok: true, message: 'Media moved successfully' });
+    } catch (error) {
+      console.error('[MEDIA] Move error:', error);
+      res.status(500).json({ error: 'Failed to move media' });
+    }
+  };
+
+  /**
+   * Bulk delete media files
+   */
+  exports.bulkDeleteMedia = async (req, res) => {
+    try {
+      const { ids } = req.body || {};
+      const adminId = req.user?.id;
+      const userRole = req.user?.role;
+
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'Media IDs are required' });
+      }
+
+      // Fetch all media items to check permissions and get paths
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+      const rows = await prisma.$queryRawUnsafe(
+        `SELECT id, path, created_by FROM media WHERE id IN (${placeholders})`,
+        ...ids
+      );
+
+      const deletedIds = [];
+      for (const row of rows) {
+        if (userRole === 'super_admin' || !adminId || row.created_by === adminId) {
+          const fullPath = path.join(ASSETS_DIR, row.path.replace(/\//g, path.sep));
+          if (fs.existsSync(fullPath)) {
+            try {
+              fs.unlinkSync(fullPath);
+            } catch (e) {
+              console.error('[MEDIA] Error deleting file:', fullPath, e.message);
+            }
+          }
+          deletedIds.push(row.id);
+        }
+      }
+
+      if (deletedIds.length > 0) {
+        const deletePlaceholders = deletedIds.map((_, i) => `$${i + 1}`).join(',');
+        await prisma.$executeRawUnsafe(
+          `DELETE FROM media WHERE id IN (${deletePlaceholders})`,
+          ...deletedIds
+        );
+
+        if (io) {
+          io.emit('assets-updated', { type: 'media', action: 'bulk-delete', ids: deletedIds });
+        }
+      }
+
+      res.json({ 
+        ok: true, 
+        message: `Successfully deleted ${deletedIds.length} file(s)`,
+        totalRequested: ids.length,
+        totalDeleted: deletedIds.length
+      });
+    } catch (error) {
+      console.error('[MEDIA] Bulk delete error:', error);
+      res.status(500).json({ error: 'Failed to bulk delete media' });
+    }
+  };
+
+  /**
+   * Bulk move media files
+   */
+  exports.bulkMoveMedia = async (req, res) => {
+    try {
+      const { ids, folderId } = req.body || {};
+      const adminId = req.user?.id;
+      const userRole = req.user?.role;
+
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'Media IDs required' });
+      }
+
+      // Fetch to check permissions
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+      const rows = await prisma.$queryRawUnsafe(
+        `SELECT id, created_by FROM media WHERE id IN (${placeholders})`,
+        ...ids
+      );
+
+      const allowedIds = rows
+        .filter(r => userRole === 'super_admin' || !adminId || r.created_by === adminId)
+        .map(r => r.id);
+
+      if (allowedIds.length > 0) {
+        const movePlaceholders = allowedIds.map((_, i) => `$${i + 2}`).join(',');
+        await prisma.$executeRawUnsafe(
+          `UPDATE media SET folder_id = $1::uuid WHERE id IN (${movePlaceholders})`,
+          folderId || null,
+          ...allowedIds
+        );
+
+        if (io) {
+          io.emit('assets-updated', { type: 'media', action: 'bulk-move', ids: allowedIds, folderId });
+        }
+      }
+
+      res.json({ 
+        ok: true, 
+        message: `Successfully moved ${allowedIds.length} media items`,
+        totalMoved: allowedIds.length
+      });
+    } catch (error) {
+      console.error('[MEDIA] Bulk move error:', error);
+      res.status(500).json({ error: 'Failed to bulk move media' });
     }
   };
 

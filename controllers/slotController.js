@@ -1,9 +1,131 @@
 const { PrismaClient } = require('@prisma/client');
+const fs = require('fs');
+const path = require('path');
+const { ASSETS_DIR, ASSET_BASE_URL } = require('../config/assets');
 const prisma = new PrismaClient();
+
+function normalizeAssetBaseUrl() {
+  return (ASSET_BASE_URL || '').replace(/\/$/, '');
+}
+
+function tryResolveOwnAssetPath(assetUrl) {
+  if (!assetUrl || typeof assetUrl !== 'string') return null;
+
+  const baseUrl = normalizeAssetBaseUrl();
+  if (!baseUrl || !assetUrl.startsWith(`${baseUrl}/`)) {
+    return null;
+  }
+
+  const relativePath = assetUrl
+    .slice(baseUrl.length)
+    .replace(/^\//, '')
+    .split('?')[0]
+    .replace(/\//g, path.sep);
+
+  return path.join(ASSETS_DIR, relativePath);
+}
+
+async function isPlaylistAssetAvailable(slot) {
+  if (!slot || typeof slot !== 'object') return false;
+
+  const assetUrl = slot.asset_url || slot.url;
+  if (!assetUrl || typeof assetUrl !== 'string' || !assetUrl.trim()) {
+    return false;
+  }
+
+  const ownAssetPath = tryResolveOwnAssetPath(assetUrl);
+  if (ownAssetPath) {
+    return fs.existsSync(ownAssetPath);
+  }
+
+  const mediaId = slot.id || slot.publicId || slot.mediaId || null;
+  if (!mediaId) {
+    // External URLs are treated as valid here because the server cannot
+    // cheaply guarantee their reachability at playlist fetch time.
+    return true;
+  }
+
+  try {
+    const mediaRows = await prisma.$queryRawUnsafe(
+      'SELECT id FROM media WHERE id = $1 LIMIT 1',
+      String(mediaId)
+    );
+    return Array.isArray(mediaRows) && mediaRows.length > 0;
+  } catch (error) {
+    console.warn('[ASSETS] Failed to validate media row for playlist slot:', mediaId, error.message);
+    return true;
+  }
+}
+
+async function ensureGeneratedSlotsTable() {
+  try {
+    // Ensure campaigns table exists
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS campaigns (
+        id VARCHAR(255) PRIMARY KEY,
+        user_name VARCHAR(255),
+        campaign_name VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'PENDING',
+        total_amount DECIMAL(10, 2),
+        start_date TIMESTAMP,
+        end_date TIMESTAMP,
+        billboards JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Ensure billboards table exists
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS billboards (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255),
+        location VARCHAR(512),
+        city VARCHAR(255),
+        state VARCHAR(255),
+        type VARCHAR(100),
+        orientation VARCHAR(50),
+        daily_viewership INTEGER,
+        price_per_day DECIMAL(10, 2),
+        available BOOLEAN DEFAULT TRUE,
+        width FLOAT,
+        height FLOAT,
+        unit VARCHAR(20),
+        category VARCHAR(100),
+        status VARCHAR(50) DEFAULT 'pending',
+        rejection_reason TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Ensure generated_slots table exists
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS generated_slots (
+        id SERIAL PRIMARY KEY,
+        screen_id VARCHAR(64),
+        billboard_id INTEGER,
+        campaign_id VARCHAR(255),
+        start_date TIMESTAMP NOT NULL,
+        end_date TIMESTAMP NOT NULL,
+        slot_number INTEGER NOT NULL,
+        asset_url TEXT,
+        duration INTEGER DEFAULT 10,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS idx_generated_slots_screen_id ON generated_slots(screen_id)
+    `);
+  } catch (e) {
+    console.warn('[SLOTS] ensureTables warning:', e.message);
+  }
+}
 
 // Get all slots
 exports.getAllSlots = async (req, res) => {
   try {
+    await ensureGeneratedSlotsTable();
     const slots = await prisma.$queryRaw`
       SELECT 
         gs.*,
@@ -31,6 +153,7 @@ exports.getSlotsByBillboard = async (req, res) => {
       return res.status(400).json({ error: 'billboard_id is required' });
     }
 
+    await ensureGeneratedSlotsTable();
     const slots = await prisma.$queryRaw`
       SELECT id, start_date, end_date, slot_number
       FROM generated_slots
@@ -101,8 +224,8 @@ exports.getAssetsByScreen = async (req, res) => {
           
           // Convert playlist slots to asset format
           // Filter out empty slots (null or undefined) and slots without URLs
-          const assets = slots
-            .map((slot, index) => {
+          const playlistAssets = await Promise.all(slots
+            .map(async (slot, index) => {
               // Skip null/undefined slots
               if (!slot || slot === null) return null;
               
@@ -111,6 +234,17 @@ exports.getAssetsByScreen = async (req, res) => {
               
               // Skip slots without URLs
               if (!assetUrl || assetUrl.trim() === '') return null;
+
+              const assetAvailable = await isPlaylistAssetAvailable(slot);
+              if (!assetAvailable) {
+                console.warn('[ASSETS] Skipping missing playlist asset:', {
+                  screenId: screen_id,
+                  playlistId,
+                  slotNumber: slot.slot_number || (index + 1),
+                  assetUrl,
+                });
+                return null;
+              }
               
               // Filter slots that are active for the target date
               if (slot.start_date && slot.end_date) {
@@ -131,7 +265,8 @@ exports.getAssetsByScreen = async (req, res) => {
                 end_date: slot.end_date || end.toISOString()
               };
             })
-            .filter(asset => asset !== null); // Remove null entries
+          );
+          const assets = playlistAssets.filter(asset => asset !== null); // Remove null entries
           
           console.log('[ASSETS] Returning', assets.length, 'assets from playlist (filtered empty slots)');
           return res.json(assets);
@@ -147,6 +282,7 @@ exports.getAssetsByScreen = async (req, res) => {
     tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
     tomorrowEnd.setHours(23, 59, 59, 999);
 
+    await ensureGeneratedSlotsTable();
     const slots = await prisma.$queryRaw`
       SELECT *
       FROM generated_slots

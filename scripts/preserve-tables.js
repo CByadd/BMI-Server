@@ -78,6 +78,78 @@ async function preserveTables() {
     `);
     console.log('✓ schedules table verified');
 
+    // Ensure campaigns table exists
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS campaigns (
+        id VARCHAR(255) PRIMARY KEY,
+        user_name VARCHAR(255),
+        campaign_name VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'PENDING',
+        total_amount DECIMAL(10, 2),
+        start_date TIMESTAMP,
+        end_date TIMESTAMP,
+        billboards JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log('✓ campaigns table verified');
+
+    // Ensure billboards table exists
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS billboards (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255),
+        location VARCHAR(512),
+        city VARCHAR(255),
+        state VARCHAR(255),
+        type VARCHAR(100),
+        orientation VARCHAR(50),
+        daily_viewership INTEGER,
+        price_per_day DECIMAL(10, 2),
+        available BOOLEAN DEFAULT TRUE,
+        width FLOAT,
+        height FLOAT,
+        unit VARCHAR(20),
+        category VARCHAR(100),
+        status VARCHAR(50) DEFAULT 'pending',
+        rejection_reason TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log('✓ billboards table verified');
+
+    // Ensure generated_slots table exists
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS generated_slots (
+        id SERIAL PRIMARY KEY,
+        screen_id VARCHAR(64),
+        billboard_id INTEGER,
+        campaign_id VARCHAR(255),
+        start_date TIMESTAMP NOT NULL,
+        end_date TIMESTAMP NOT NULL,
+        slot_number INTEGER NOT NULL,
+        asset_url TEXT,
+        duration INTEGER DEFAULT 10,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    // Add indexes for faster queries
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS idx_generated_slots_screen_id ON generated_slots(screen_id);
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS idx_generated_slots_billboard_id ON generated_slots(billboard_id);
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS idx_generated_slots_campaign_id ON generated_slots(campaign_id);
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS idx_generated_slots_dates ON generated_slots(start_date, end_date);
+    `);
+    console.log('✓ generated_slots table verified');
+
     console.log('\n✓ All required tables are preserved');
     console.log('You can now safely run: npx prisma db push --accept-data-loss');
 
