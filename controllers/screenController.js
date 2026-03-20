@@ -29,9 +29,13 @@ function saveBufferToAssets(buffer, originalName, prefix) {
     ensureAssetDirs();
     const dir = getTypeDir(TYPES.IMAGES);
     const ext = path.extname(originalName || '') || '.png';
-    const filename = safeFilename(prefix + ext);
+    const filename = safeFilename(`${prefix}${path.basename(originalName || `image${ext}`)}`);
     const fullPath = path.join(dir, filename);
     fs.writeFileSync(fullPath, buffer);
+    if (!fs.existsSync(fullPath)) {
+        throw new Error(`Asset write did not persist: ${fullPath}`);
+    }
+    console.log('[ADSCAPE] Saved asset to:', fullPath);
     return assetUrl(TYPES.IMAGES, filename);
 }
 
