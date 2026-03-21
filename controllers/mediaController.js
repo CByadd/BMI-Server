@@ -8,6 +8,7 @@ const {
   ensureDir,
   getTypeFromMimetype,
   ensureAssetDirs,
+  getManagedMediaRootDir,
   managedMediaUrl,
 } = require('../config/assets');
 
@@ -119,6 +120,47 @@ function cleanupFile(filePath) {
   } catch (error) {
     console.error('[MEDIA] Failed to remove file:', filePath, error.message);
   }
+}
+
+function parseMediaTags(tags) {
+  if (!tags) return [];
+  if (Array.isArray(tags)) return tags;
+  if (typeof tags === 'string') {
+    try {
+      const parsed = JSON.parse(tags);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_error) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function isFlowDrawerMedia(row) {
+  const tags = parseMediaTags(row?.tags).map((tag) => String(tag).toLowerCase());
+  const relativePath = String(row?.path || '').replace(/\\/g, '/').toLowerCase();
+  return tags.includes('flow-drawer') || relativePath.includes('/flow-drawer/');
+}
+
+function findManagedFileByMediaId(mediaId, startDir = getManagedMediaRootDir()) {
+  if (!mediaId || !startDir || !fs.existsSync(startDir)) return null;
+
+  const entries = fs.readdirSync(startDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(startDir, entry.name);
+
+    if (entry.isDirectory()) {
+      const match = findManagedFileByMediaId(mediaId, fullPath);
+      if (match) return match;
+      continue;
+    }
+
+    if (entry.isFile() && entry.name.startsWith(`${mediaId}-`)) {
+      return fullPath;
+    }
+  }
+
+  return null;
 }
 
 async function relocateMediaFile(mediaRow, folderId) {
@@ -349,8 +391,10 @@ module.exports = (io) => {
         ...params
       );
 
-      const media = (rows || []).map((r) => {
-        const tagsArr = (r.tags && (typeof r.tags === 'string' ? JSON.parse(r.tags) : r.tags)) || [];
+      const media = (rows || [])
+        .filter((row) => !isFlowDrawerMedia(row))
+        .map((r) => {
+        const tagsArr = parseMediaTags(r.tags);
         return {
           id: r.id,
           publicId: r.id,
@@ -622,6 +666,35 @@ module.exports = (io) => {
       }
 
       if (!fs.existsSync(fullPath)) {
+        const recoveredPath = findManagedFileByMediaId(String(mediaId));
+
+        if (recoveredPath) {
+          const relativeRecoveredPath = path.relative(ASSETS_DIR, recoveredPath).replace(/\\/g, '/');
+          const recoveredFilename = path.basename(recoveredPath);
+
+          console.warn('[MEDIA] Recovered missing media path from disk scan:', {
+            mediaId: String(mediaId),
+            oldPath: row.path,
+            recoveredPath: relativeRecoveredPath,
+          });
+
+          try {
+            await prisma.$executeRawUnsafe(
+              'UPDATE media SET path = $1, url = $2 WHERE id = $3',
+              relativeRecoveredPath,
+              managedMediaUrl(String(mediaId), recoveredFilename),
+              String(mediaId)
+            );
+          } catch (updateError) {
+            console.error('[MEDIA] Failed to persist recovered media path:', {
+              mediaId: String(mediaId),
+              error: updateError.message,
+            });
+          }
+
+          return res.sendFile(recoveredPath);
+        }
+
         return res.status(404).json({ error: 'Media file not found on disk' });
       }
 
