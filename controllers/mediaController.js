@@ -607,7 +607,20 @@ module.exports = (io) => {
         return res.status(404).json({ error: 'Media not found' });
       }
 
-      const fullPath = path.join(ASSETS_DIR, String(row.path).replace(/\//g, path.sep));
+      const relativeMediaPath = String(row.path).replace(/\//g, path.sep);
+      const fullPath = path.resolve(ASSETS_DIR, relativeMediaPath);
+      const assetsRoot = path.resolve(ASSETS_DIR);
+
+      if (!fullPath.startsWith(assetsRoot + path.sep) && fullPath !== assetsRoot) {
+        console.error('[MEDIA] Refusing to serve file outside assets dir:', {
+          mediaId: String(mediaId),
+          storedPath: row.path,
+          resolvedPath: fullPath,
+          assetsRoot,
+        });
+        return res.status(400).json({ error: 'Invalid media path' });
+      }
+
       if (!fs.existsSync(fullPath)) {
         return res.status(404).json({ error: 'Media file not found on disk' });
       }

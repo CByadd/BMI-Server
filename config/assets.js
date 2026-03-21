@@ -6,7 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const ASSETS_DIR = process.env.ASSETS_DIR || '/var/www/assets';
+const RAW_ASSETS_DIR = process.env.ASSETS_DIR || '/var/www/assets';
+const ASSETS_DIR = path.resolve(RAW_ASSETS_DIR);
 const ASSET_BASE_URL = (process.env.ASSET_BASE_URL || 'https://api.well2day.in/assets').replace(/\/$/, '');
 
 const TYPES = {
