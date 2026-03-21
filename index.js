@@ -262,6 +262,7 @@ setInterval(logSocketStatus, SOCKET_STATUS_INTERVAL_MS);
 const ASSETS_DIR = process.env.ASSETS_DIR || '/var/www/assets';
 const mediaAssetController = require('./controllers/mediaController')(null);
 app.get('/assets/media/:mediaId/:filename', mediaAssetController.serveMediaAsset);
+app.get('/assets/:type/:filename', mediaAssetController.serveLegacyAsset);
 app.use('/assets', express.static(ASSETS_DIR));
 
 // Health

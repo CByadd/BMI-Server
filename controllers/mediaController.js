@@ -163,6 +163,31 @@ function findManagedFileByMediaId(mediaId, startDir = getManagedMediaRootDir()) 
   return null;
 }
 
+function findManagedFileByFilename(filename, startDir = getManagedMediaRootDir()) {
+  if (!filename || !startDir || !fs.existsSync(startDir)) return null;
+
+  const normalizedFilename = String(filename).toLowerCase();
+  const entries = fs.readdirSync(startDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(startDir, entry.name);
+
+    if (entry.isDirectory()) {
+      const match = findManagedFileByFilename(filename, fullPath);
+      if (match) return match;
+      continue;
+    }
+
+    if (!entry.isFile()) continue;
+
+    const candidate = entry.name.toLowerCase();
+    if (candidate === normalizedFilename || candidate.endsWith(`-${normalizedFilename}`)) {
+      return fullPath;
+    }
+  }
+
+  return null;
+}
+
 async function relocateMediaFile(mediaRow, folderId) {
   const currentFullPath = path.join(ASSETS_DIR, String(mediaRow.path).replace(/\//g, path.sep));
   if (!fs.existsSync(currentFullPath)) {
@@ -702,6 +727,42 @@ module.exports = (io) => {
     } catch (error) {
       console.error('[MEDIA] Serve asset error:', error);
       return res.status(500).json({ error: 'Failed to serve media asset' });
+    }
+  };
+
+  exports.serveLegacyAsset = async (req, res) => {
+    try {
+      const { type, filename } = req.params;
+
+      if (!type || !filename) {
+        return res.status(400).json({ error: 'Asset type and filename are required' });
+      }
+
+      const flatPath = path.resolve(ASSETS_DIR, String(type), String(filename));
+      const assetsRoot = path.resolve(ASSETS_DIR);
+
+      if (!flatPath.startsWith(assetsRoot + path.sep) && flatPath !== assetsRoot) {
+        return res.status(400).json({ error: 'Invalid asset path' });
+      }
+
+      if (fs.existsSync(flatPath)) {
+        return res.sendFile(flatPath);
+      }
+
+      const recoveredPath = findManagedFileByFilename(String(filename));
+      if (recoveredPath) {
+        console.warn('[MEDIA] Recovered legacy asset request from managed storage:', {
+          requestedType: String(type),
+          requestedFilename: String(filename),
+          recoveredPath: path.relative(ASSETS_DIR, recoveredPath).replace(/\\/g, '/'),
+        });
+        return res.sendFile(recoveredPath);
+      }
+
+      return res.status(404).json({ error: 'Asset not found on disk' });
+    } catch (error) {
+      console.error('[MEDIA] Serve legacy asset error:', error);
+      return res.status(500).json({ error: 'Failed to serve asset' });
     }
   };
 
