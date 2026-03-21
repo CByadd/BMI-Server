@@ -1,0 +1,1 @@
+const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); async function run() { console.log(await prisma.$queryRawUnsafe('SELECT * FROM media WHERE id = $1', '5444c8c4-fe17-4830-854e-30c09a6bb434')); process.exit(0); } run();

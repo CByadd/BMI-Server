@@ -33,6 +33,25 @@ function parseManagedMediaUrl(url) {
     return match ? String(match[1]) : null;
 }
 
+function getRequestBaseUrl(req) {
+    const forwardedProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0].trim();
+    const forwardedHost = (req.headers['x-forwarded-host'] || '').toString().split(',')[0].trim();
+    const proto = forwardedProto || req.protocol || 'https';
+    const host = forwardedHost || req.get('host');
+    return host ? `${proto}://${host}`.replace(/\/$/, '') : null;
+}
+
+function rewriteAssetUrlForRequest(url, req) {
+    if (!url || typeof url !== 'string') return url;
+    const requestBase = getRequestBaseUrl(req);
+    if (!requestBase) return url;
+
+    const assetIndex = url.indexOf('/assets/');
+    if (assetIndex < 0) return url;
+
+    return `${requestBase}${url.substring(assetIndex)}`;
+}
+
 async function ensureManagedMediaTable() {
     try {
         await prisma.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
@@ -345,11 +364,11 @@ exports.getPlayer = async (req, res) => {
                 }
 
                 // Get individual URL fields
-                flowDrawerImage1Url = configResult[0].flowDrawerImage1Url || null;
-                flowDrawerImage2Url = configResult[0].flowDrawerImage2Url || null;
-                flowDrawerImage3Url = configResult[0].flowDrawerImage3Url || null;
-                flowDrawerImage4Url = configResult[0].flowDrawerImage4Url || null;
-                flowDrawerImage5Url = configResult[0].flowDrawerImage5Url || null;
+                flowDrawerImage1Url = rewriteAssetUrlForRequest(configResult[0].flowDrawerImage1Url || null, req);
+                flowDrawerImage2Url = rewriteAssetUrlForRequest(configResult[0].flowDrawerImage2Url || null, req);
+                flowDrawerImage3Url = rewriteAssetUrlForRequest(configResult[0].flowDrawerImage3Url || null, req);
+                flowDrawerImage4Url = rewriteAssetUrlForRequest(configResult[0].flowDrawerImage4Url || null, req);
+                flowDrawerImage5Url = rewriteAssetUrlForRequest(configResult[0].flowDrawerImage5Url || null, req);
 
                 // Build slots array from individual URL fields based on slot count
                 flowDrawerSlots = [];
@@ -856,7 +875,7 @@ exports.deleteLogo = async (req, res) => {
  * Upload flow drawer image for screen
  * POST /api/adscape/player/:screenId/flow-drawer-image/:imageNumber
  */
-exports.uploadFlowDrawerImage = async (req, res) => {
+exports.uploadFlowDrawerImage = async (req, res, io) => {
     try {
         const { screenId, imageNumber } = req.params;
 
@@ -970,6 +989,18 @@ exports.uploadFlowDrawerImage = async (req, res) => {
 
         console.log(`[ADSCAPE] Flow drawer image ${slotIndex + 1} uploaded for screen:`, screenId);
 
+        if (io) {
+            const payload = {
+                screenId: String(screenId),
+                slotCount,
+                slots: updatedSlots,
+                reason: 'flow_drawer_upload'
+            };
+            io.to(`screen:${String(screenId)}`).emit('flow-drawer-images-updated', payload);
+            io.to(`screen:${String(screenId)}`).emit('screen-config-changed', payload);
+            console.log('[ADSCAPE] Flow drawer upload emitted to screen:', payload);
+        }
+
         return res.json({
             ok: true,
             imageUrl: imageUrlNew,
@@ -1008,11 +1039,11 @@ exports.getFlowDrawerImages = async (req, res) => {
 
             if (imageResult && imageResult.length > 0) {
                 slotCount = imageResult[0].flowDrawerSlotCount || 2;
-                flowDrawerImage1Url = imageResult[0].flowDrawerImage1Url || null;
-                flowDrawerImage2Url = imageResult[0].flowDrawerImage2Url || null;
-                const flowDrawerImage3Url = imageResult[0].flowDrawerImage3Url || null;
-                const flowDrawerImage4Url = imageResult[0].flowDrawerImage4Url || null;
-                const flowDrawerImage5Url = imageResult[0].flowDrawerImage5Url || null;
+                flowDrawerImage1Url = rewriteAssetUrlForRequest(imageResult[0].flowDrawerImage1Url || null, req);
+                flowDrawerImage2Url = rewriteAssetUrlForRequest(imageResult[0].flowDrawerImage2Url || null, req);
+                const flowDrawerImage3Url = rewriteAssetUrlForRequest(imageResult[0].flowDrawerImage3Url || null, req);
+                const flowDrawerImage4Url = rewriteAssetUrlForRequest(imageResult[0].flowDrawerImage4Url || null, req);
+                const flowDrawerImage5Url = rewriteAssetUrlForRequest(imageResult[0].flowDrawerImage5Url || null, req);
 
                 // Build slots array from individual URL fields based on slot count
                 slots = [];
@@ -1037,6 +1068,13 @@ exports.getFlowDrawerImages = async (req, res) => {
             });
         }
 
+        console.log('[ADSCAPE] Flow drawer response normalized for request host:', {
+            screenId: String(screenId),
+            requestBase: getRequestBaseUrl(req),
+            slotCount,
+            slots
+        });
+
         return res.json({
             ok: true,
             slotCount: slotCount,
@@ -1057,7 +1095,7 @@ exports.getFlowDrawerImages = async (req, res) => {
  * Delete flow drawer image for screen
  * DELETE /api/adscape/player/:screenId/flow-drawer-image/:imageNumber
  */
-exports.deleteFlowDrawerImage = async (req, res) => {
+exports.deleteFlowDrawerImage = async (req, res, io) => {
     try {
         const { screenId, imageNumber } = req.params;
 
@@ -1160,6 +1198,18 @@ exports.deleteFlowDrawerImage = async (req, res) => {
             }
         } catch (e) {
             console.log('[ADSCAPE] Error fetching updated slots:', e.message);
+        }
+
+        if (io) {
+            const payload = {
+                screenId: String(screenId),
+                slotCount,
+                slots: updatedSlots,
+                reason: 'flow_drawer_delete'
+            };
+            io.to(`screen:${String(screenId)}`).emit('flow-drawer-images-updated', payload);
+            io.to(`screen:${String(screenId)}`).emit('screen-config-changed', payload);
+            console.log('[ADSCAPE] Flow drawer delete emitted to screen:', payload);
         }
 
         return res.json({

@@ -1,0 +1,1 @@
+const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); async function run() { console.log(await prisma.$queryRawUnsafe('SELECT id, created_at FROM media ORDER BY created_at DESC LIMIT 5')); process.exit(0); } run();
