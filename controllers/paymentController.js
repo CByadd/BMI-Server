@@ -1,52 +1,50 @@
-// ============================================
-// RAZORPAY IMPLEMENTATION (COMMENTED OUT)
-// ============================================
-// const Razorpay = require('razorpay');
-// const crypto = require('crypto');
-
-// // Validate Razorpay credentials
-// const keyId = process.env.RAZORPAY_KEY_ID?.trim();
-// const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
-
-// if (!keyId || !keySecret) {
-//   console.error('[RAZORPAY] WARNING: Razorpay credentials not configured!');
-//   console.error('[RAZORPAY] RAZORPAY_KEY_ID:', keyId ? 'SET' : 'MISSING');
-//   console.error('[RAZORPAY] RAZORPAY_KEY_SECRET:', keySecret ? 'SET' : 'MISSING');
-// } else {
-//   // Log key info without exposing secrets
-//   console.log('[RAZORPAY] Credentials loaded:');
-//   console.log('[RAZORPAY] Key ID:', keyId.substring(0, 10) + '...' + keyId.substring(keyId.length - 4));
-//   console.log('[RAZORPAY] Key Secret:', keySecret.substring(0, 4) + '...' + keySecret.substring(keySecret.length - 4));
-//   console.log('[RAZORPAY] Key Type:', keyId.startsWith('rzp_live_') ? 'LIVE' : keyId.startsWith('rzp_test_') ? 'TEST' : 'UNKNOWN');
-// }
-
-// // Initialize Razorpay instance
-// const razorpay = new Razorpay({
-//   key_id: keyId,
-//   key_secret: keySecret,
-// });
-
-// ============================================
-// MOCK PAYMENT IMPLEMENTATION
-// ============================================
-const MOCK_PAYMENT_MODE = process.env.MOCK_PAYMENT_MODE === 'true' || process.env.MOCK_PAYMENT_MODE === '1' || true; // Default to true
+const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
-// In-memory store for mock orders (for verification)
-const mockOrderStore = new Map();
+// Validate Razorpay credentials
+const keyId = process.env.RAZORPAY_KEY_ID?.trim();
+const keySecret = process.env.RAZORPAY_KEY_SECRET?.trim();
 
-console.log('[PAYMENT] 🧪 MOCK PAYMENT MODE ENABLED');
-console.log('[PAYMENT] 🧪 All payments will be automatically approved');
+if (!keyId || !keySecret) {
+  console.error('[RAZORPAY] WARNING: Razorpay credentials not configured!');
+  console.error('[RAZORPAY] RAZORPAY_KEY_ID:', keyId ? 'SET' : 'MISSING');
+  console.error('[RAZORPAY] RAZORPAY_KEY_SECRET:', keySecret ? 'SET' : 'MISSING');
+} else {
+  // Log key info without exposing secrets
+  console.log('[RAZORPAY] Credentials loaded:');
+  console.log('[RAZORPAY] Key ID:', keyId.substring(0, 10) + '...' + keyId.substring(keyId.length - 4));
+  console.log('[RAZORPAY] Key Secret:', keySecret.substring(0, 4) + '...' + keySecret.substring(keySecret.length - 4));
+  console.log('[RAZORPAY] Key Type:', keyId.startsWith('rzp_live_') ? 'LIVE' : keyId.startsWith('rzp_test_') ? 'TEST' : 'UNKNOWN');
+}
+
+// Initialize Razorpay instance
+const razorpay = new Razorpay({
+  key_id: keyId,
+  key_secret: keySecret,
+});
+
+// ============================================
+// PAYMENT IMPLEMENTATION (MOCK SUPPORT)
+// ============================================
+const MOCK_PAYMENT_MODE = process.env.MOCK_PAYMENT_MODE === 'true'; 
+
+// In-memory store for orders (for verification and notes retrieval)
+const orderStore = new Map();
+
+if (MOCK_PAYMENT_MODE) {
+  console.log('[PAYMENT] 🧪 MOCK PAYMENT MODE ENABLED');
+  console.log('[PAYMENT] 🧪 All payments will be automatically approved');
+} else {
+  console.log('[PAYMENT] 💳 RAZORPAY LIVE MODE ENABLED');
+}
 
 /**
  * POST /api/payment/create-order
- * Create a mock payment order (Razorpay implementation commented out)
+ * Create a payment order
  */
 exports.createOrder = async (req, res) => {
   try {
     const { amount, currency = 'INR', receipt, notes } = req.body;
-
-    console.log('[PAYMENT] 🧪 MOCK: Create order request:', { amount, currency, receipt, notes });
 
     // Validate amount
     if (amount === null || amount === undefined || amount === '') {
@@ -75,55 +73,79 @@ exports.createOrder = async (req, res) => {
 
     // Convert amount to paise (smallest currency unit for INR)
     const amountInPaise = Math.round(amountNum * 100);
-
-    // Generate mock order ID
-    const mockOrderId = `order_mock_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const receiptValue = receipt || `rcpt${Date.now()}`;
 
-    // Store order in memory for verification
-    mockOrderStore.set(mockOrderId, {
-      amount: amountInPaise,
-      currency: currency,
-      receipt: receiptValue,
-      notes: notes || {},
-      createdAt: Date.now(),
-      status: 'created'
-    });
+    if (MOCK_PAYMENT_MODE) {
+      console.log('[PAYMENT] 🧪 MOCK: Create order request:', { amount, currency, receipt, notes });
+      
+      // Generate mock order ID
+      const mockOrderId = `order_mock_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-    console.log('[PAYMENT] 🧪 MOCK: Order created successfully:', mockOrderId);
-
-    res.json({
-      ok: true,
-      order: {
-        id: mockOrderId,
+      // Store order in memory for verification
+      orderStore.set(mockOrderId, {
         amount: amountInPaise,
         currency: currency,
         receipt: receiptValue,
-        status: 'created',
-      },
-      mockMode: true
-    });
+        notes: notes || {},
+        createdAt: Date.now(),
+        status: 'created'
+      });
 
-    // ============================================
-    // RAZORPAY IMPLEMENTATION (COMMENTED OUT)
-    // ============================================
-    // console.log('[RAZORPAY] Create order request:', { amount, currency, receipt, notes });
-    // // ... rest of Razorpay code ...
-    // const order = await razorpay.orders.create(options);
-    // res.json({ ok: true, order: { ... } });
+      console.log('[PAYMENT] 🧪 MOCK: Order created successfully:', mockOrderId);
+
+      return res.json({
+        ok: true,
+        order: {
+          id: mockOrderId,
+          amount: amountInPaise,
+          currency: currency,
+          receipt: receiptValue,
+          status: 'created',
+        },
+        mockMode: true
+      });
+    } else {
+      console.log('[RAZORPAY] Create order request:', { amount, currency, receipt, notes });
+      
+      const options = {
+        amount: amountInPaise,
+        currency: currency,
+        receipt: receiptValue,
+        notes: notes || {}
+      };
+
+      const order = await razorpay.orders.create(options);
+      
+      // Store order in memory to retrieve notes later during verification
+      orderStore.set(order.id, {
+        amount: order.amount,
+        currency: order.currency,
+        receipt: order.receipt,
+        notes: order.notes || {},
+        createdAt: Date.now(),
+        status: order.status
+      });
+
+      console.log('[RAZORPAY] Order created successfully:', order.id);
+
+      return res.json({
+        ok: true,
+        order: order,
+        mockMode: false
+      });
+    }
   } catch (error) {
-    console.error('[PAYMENT] 🧪 MOCK: Create order error:', error);
+    console.error('[PAYMENT] Create order error:', error);
     res.status(500).json({
       error: 'Failed to create order',
       message: error.message,
-      details: 'An unexpected error occurred while creating the payment order'
     });
   }
 };
 
 /**
  * POST /api/payment/verify
- * Verify mock payment (Razorpay implementation commented out)
+ * Verify payment
  * Also triggers payment success notification to Android if bmiId and userId are in order notes
  */
 exports.verifyPayment = async (req, res, io, bmiFlowController) => {
@@ -140,30 +162,42 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
     console.log('[PAYMENT_FLOW] Request IP:', req.ip || req.connection.remoteAddress);
     console.log('═══════════════════════════════════════════════════════════════');
 
-    console.log('[PAYMENT] 🧪 MOCK: Verify payment request:', { 
-      order_id: razorpay_order_id, 
-      payment_id: razorpay_payment_id 
-    });
-
     if (!razorpay_order_id || !razorpay_payment_id) {
       return res.status(400).json({
         error: 'Missing required payment verification fields',
       });
     }
 
-    // SIMPLE MOCK: Always verify successfully - no store check needed
-    // This works in serverless environments where in-memory store doesn't persist
-    console.log('[PAYMENT] 🧪 MOCK: Simple mock mode - accepting all payments');
-    console.log('[PAYMENT] 🧪 MOCK: Payment verified successfully:', {
-      order_id: razorpay_order_id,
-      payment_id: razorpay_payment_id
-    });
+    let isVerified = false;
+
+    if (MOCK_PAYMENT_MODE) {
+      console.log('[PAYMENT] 🧪 MOCK: Simple mock mode - accepting all payments');
+      isVerified = true;
+    } else {
+      // Real Razorpay signature verification
+      const text = `${razorpay_order_id}|${razorpay_payment_id}`;
+      const generatedSignature = crypto
+        .createHmac('sha256', keySecret)
+        .update(text)
+        .digest('hex');
+      
+      isVerified = generatedSignature === razorpay_signature;
+      console.log('[RAZORPAY] Signature verification:', isVerified ? 'SUCCESS' : 'FAILED');
+    }
+
+    if (!isVerified) {
+      return res.status(400).json({
+        ok: false,
+        verified: false,
+        error: 'Invalid payment signature'
+      });
+    }
 
     // Automatically trigger payment success notification to Android after payment verification
-    // This ensures Android receives confirmation immediately after payment verification
-    console.log('[PAYMENT_FLOW] Checking if order exists in store:', razorpay_order_id, 'Exists:', mockOrderStore.has(razorpay_order_id));
-    if (mockOrderStore.has(razorpay_order_id) && io && bmiFlowController) {
-      const order = mockOrderStore.get(razorpay_order_id);
+    console.log('[PAYMENT_FLOW] Checking if order exists in store:', razorpay_order_id, 'Exists:', orderStore.has(razorpay_order_id));
+    
+    if (orderStore.has(razorpay_order_id) && io && bmiFlowController) {
+      const order = orderStore.get(razorpay_order_id);
       console.log('[PAYMENT_FLOW] Order found in store:', JSON.stringify(order, null, 2));
       const notes = order.notes || {};
       const userId = notes.userId;
@@ -174,7 +208,6 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
       if (!bmiId && userId && screenId) {
         try {
           const prisma = require('../db');
-          // Find the most recent BMI record for this screen that doesn't have a userId yet
           const recentBMI = await prisma.bMI.findFirst({
             where: {
               screenId: String(screenId),
@@ -188,8 +221,6 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
           if (recentBMI) {
             bmiId = recentBMI.id;
             console.log('[PAYMENT] Found recent BMI record for screen:', screenId, 'bmiId:', bmiId);
-          } else {
-            console.log('[PAYMENT] No unlinked BMI record found for screen:', screenId);
           }
         } catch (dbError) {
           console.error('[PAYMENT] Error finding BMI record for auto-notification:', dbError);
@@ -199,78 +230,45 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
       // Trigger payment success notification if we have both userId and bmiId
       if (bmiId && userId) {
         console.log('[PAYMENT_FLOW] 🔔 Auto-triggering payment success notification');
-        console.log('[PAYMENT_FLOW] BMI ID:', bmiId);
-        console.log('[PAYMENT_FLOW] User ID:', userId);
-        console.log('[PAYMENT] Auto-triggering payment success notification for bmiId:', bmiId, 'userId:', userId);
-        console.log('[PAYMENT_FLOW] Order object:', JSON.stringify(order, null, 2));
         try {
-          // Get payment amount from order (convert from paise to rupees)
           const paymentAmountInRupees = order.amount ? order.amount / 100 : null;
-          console.log('[PAYMENT_FLOW] Payment amount from order:', paymentAmountInRupees, 'rupees (from order amount:', order.amount, 'paise)');
           
-          // Call payment success handler directly
           const mockReq = {
             body: {
               userId: userId,
               bmiId: bmiId,
-              appVersion: 'f1', // Default to f1 for F1/F3 flows (will be normalized in paymentSuccess)
-              paymentAmount: paymentAmountInRupees // Pass actual payment amount paid by user
+              appVersion: 'f1', // Default to f1
+              paymentAmount: paymentAmountInRupees
             }
           };
-          console.log('[PAYMENT_FLOW] Mock request body being passed to paymentSuccess:', JSON.stringify(mockReq.body, null, 2));
+          
           const mockRes = {
             json: (data) => {
               console.log('[PAYMENT_FLOW] ✅ Payment success notification triggered successfully');
-              console.log('[PAYMENT] Auto payment success notification result:', data);
             },
             status: (code) => ({ json: (data) => {
               console.log('[PAYMENT_FLOW] ❌ Payment success notification failed:', code);
-              console.log('[PAYMENT] Auto payment success notification error:', code, data);
             }})
           };
           await bmiFlowController.paymentSuccess(mockReq, mockRes, io);
         } catch (notifyError) {
-          console.log('[PAYMENT_FLOW] ❌ Error auto-triggering payment success notification:', notifyError.message);
           console.error('[PAYMENT] Error auto-triggering payment success notification:', notifyError);
-          // Don't fail the verification if notification fails
         }
-      } else {
-        console.log('[PAYMENT_FLOW] ⚠️ Cannot auto-trigger payment success - missing bmiId or userId');
-        console.log('[PAYMENT_FLOW] BMI ID:', bmiId, 'User ID:', userId);
-        console.log('[PAYMENT] Cannot auto-trigger payment success - missing bmiId or userId. bmiId:', bmiId, 'userId:', userId);
       }
     }
 
     console.log('[PAYMENT_FLOW] ✅ Payment verification completed successfully');
-    console.log('[PAYMENT_FLOW] Verified: true, Payment ID:', razorpay_payment_id, 'Order ID:', razorpay_order_id);
 
     return res.json({
       ok: true,
       verified: true,
       payment_id: razorpay_payment_id,
       order_id: razorpay_order_id,
-      mockMode: true
+      mockMode: MOCK_PAYMENT_MODE
     });
 
-    // ============================================
-    // RAZORPAY IMPLEMENTATION (COMMENTED OUT)
-    // ============================================
-    // // Create the signature string
-    // const text = `${razorpay_order_id}|${razorpay_payment_id}`;
-    // // Generate the expected signature
-    // const generatedSignature = crypto
-    //   .createHmac('sha256', keySecret)
-    //   .update(text)
-    //   .digest('hex');
-    // // Compare signatures
-    // const isSignatureValid = generatedSignature === razorpay_signature;
-    // if (isSignatureValid) {
-    //   res.json({ ok: true, verified: true, ... });
-    // } else {
-    //   res.status(400).json({ ok: false, verified: false, ... });
-    // }
   } catch (error) {
-    console.error('[PAYMENT] 🧪 MOCK: Verify payment error:', error);
+    console.error('[PAYMENT] Verify payment error:', error);
     res.status(500).json({
       error: 'Failed to verify payment',
       message: error.message,
@@ -280,39 +278,35 @@ exports.verifyPayment = async (req, res, io, bmiFlowController) => {
 
 /**
  * GET /api/payment/key
- * Get mock payment key (Razorpay implementation commented out)
+ * Get payment key
  */
 exports.getKey = (req, res) => {
   try {
-    // Return a mock key for frontend compatibility
-    const mockKeyId = 'rzp_mock_' + Math.random().toString(36).substring(2, 15);
-    
-    console.log('[PAYMENT] 🧪 MOCK: Returning mock key ID');
+    if (MOCK_PAYMENT_MODE) {
+      const mockKeyId = 'rzp_mock_' + Math.random().toString(36).substring(2, 15);
+      return res.json({
+        ok: true,
+        key_id: mockKeyId,
+        mockMode: true
+      });
+    }
+
+    if (!keyId) {
+      return res.status(500).json({
+        error: 'Razorpay key not configured',
+      });
+    }
     
     res.json({
       ok: true,
-      key_id: mockKeyId,
-      mockMode: true
+      key_id: keyId,
+      mockMode: false
     });
-
-    // ============================================
-    // RAZORPAY IMPLEMENTATION (COMMENTED OUT)
-    // ============================================
-    // if (!keyId) {
-    //   return res.status(500).json({
-    //     error: 'Razorpay key not configured',
-    //   });
-    // }
-    // res.json({
-    //   ok: true,
-    //   key_id: keyId,
-    // });
   } catch (error) {
-    console.error('[PAYMENT] 🧪 MOCK: Get key error:', error);
+    console.error('[PAYMENT] Get key error:', error);
     res.status(500).json({
       error: 'Failed to get payment key',
       message: error.message,
     });
   }
 };
-
