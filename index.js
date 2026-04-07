@@ -248,7 +248,7 @@ function logSocketStatus() {
     if (!established) {
         if (lastConnectionError) {
             console.log('[SOCKET_STATUS] Why NO: last attempt failed — code ' + lastConnectionError.code + ' "' + lastConnectionError.message + '" at ' + lastConnectionError.at);
-            console.log('[SOCKET_STATUS] Code hints: 3=proxy/WebSocket headers, 4=allowRequest/CORS, 5=protocol version. See server/NGINX_SOCKET_IO.md');
+            console.log('[SOCKET_STATUS_] Code hints: 3=proxy/WebSocket headers, 4=allowRequest/CORS, 5=protocol version. See server/NGINX_SOCKET_IO.md');
         } else {
             console.log('[SOCKET_STATUS] Why NO: no client has reached this server yet. Check: Nginx proxies /socket.io/ with Upgrade+Connection; client uses https://api.well2day.in; CORS allows origin. See server/NGINX_SOCKET_IO.md');
         }
@@ -267,6 +267,20 @@ app.use('/assets', express.static(ASSETS_DIR));
 
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+// Internal polling status (Direct DB fetch)
+app.get('/api/payment-status/:bmiId', async (req, res) => {
+    try {
+        const { bmiId } = req.params;
+        const record = await prisma.bMI.findUnique({
+            where: { id: bmiId },
+            select: { paymentStatus: true }
+        });
+        return res.json({ ok: true, paymentStatus: !!record?.paymentStatus });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
 
 // Health Tips
 const healthTipsController = require('./controllers/healthTipsController');
@@ -420,6 +434,3 @@ app.use('*', (req, res) => {
         path: req.originalUrl
     });
 });
-
-
-

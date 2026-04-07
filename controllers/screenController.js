@@ -310,7 +310,7 @@ exports.getPlayer = async (req, res) => {
             }
         }
 
-        // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, flowDrawerSlots, hideScreenId, and flow drawer images using raw SQL (columns might not exist yet)
+        // Get playlistId, heightCalibration, heightCalibrationEnabled, paymentAmount, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId, hideAppMargin, and flow drawer images using raw SQL (columns might not exist yet)
         let playlistId = null;
         let heightCalibration = 0;
         let heightCalibrationEnabled = true;
@@ -319,6 +319,7 @@ exports.getPlayer = async (req, res) => {
         let flowDrawerEnabled = true;
         let flowDrawerSlotCount = 2;
         let hideScreenId = false;
+        let hideAppMargin = false;
         let flowDrawerSlots = [];
         let flowDrawerImage1Url = null;
         let flowDrawerImage2Url = null;
@@ -333,7 +334,7 @@ exports.getPlayer = async (req, res) => {
         let whatsappSentCount = 0;
         try {
             const configResult = await prisma.$queryRaw`
-                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", "hideScreenId",
+                SELECT "playlistId", "heightCalibration", "heightCalibrationEnabled", "paymentAmount", "logoUrl", "flowDrawerEnabled", "flowDrawerSlotCount", "hideScreenId", "hideAppMargin",
                        "flowDrawerImage1Url", "flowDrawerImage2Url", "flowDrawerImage3Url", "flowDrawerImage4Url", "flowDrawerImage5Url"
                 FROM "AdscapePlayer" 
                 WHERE "screenId" = ${String(screenId)} 
@@ -361,6 +362,9 @@ exports.getPlayer = async (req, res) => {
                 }
                 if (configResult[0].hideScreenId !== null && configResult[0].hideScreenId !== undefined) {
                     hideScreenId = Boolean(configResult[0].hideScreenId);
+                }
+                if (configResult[0].hideAppMargin !== null && configResult[0].hideAppMargin !== undefined) {
+                    hideAppMargin = Boolean(configResult[0].hideAppMargin);
                 }
 
                 // Get individual URL fields
@@ -442,6 +446,7 @@ exports.getPlayer = async (req, res) => {
                 flowDrawerSlotCount: flowDrawerSlotCount,
                 flowDrawerSlots: flowDrawerSlots,
                 hideScreenId: hideScreenId,
+                hideAppMargin: hideAppMargin,
                 lastSeen: player.lastSeen,
                 isActive: player.isActive,
                 isEnabled: player.isActive, // Also include isEnabled for Android app compatibility
@@ -779,10 +784,10 @@ exports.uploadLogo = async (req, res) => {
 
         return res.json({
             ok: true,
-            logoUrl: logoUrlNew,
+            logoUrl: rewriteAssetUrlForRequest(logoUrlNew, req),
             player: {
                 screenId: updatedPlayer.screenId,
-                logoUrl: updatedPlayer.logoUrl
+                logoUrl: rewriteAssetUrlForRequest(updatedPlayer.logoUrl, req)
             }
         });
     } catch (error) {
@@ -1220,7 +1225,7 @@ exports.deleteFlowDrawerImage = async (req, res, io) => {
 exports.updateScreenConfig = async (req, res, io) => {
     try {
         const { screenId } = req.params;
-        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId, smsEnabled, smsLimitPerScreen, resetSmsCount, whatsappEnabled, whatsappLimitPerScreen, resetWhatsAppCount } = req.body || {};
+        const { flowType, isActive, deviceName, location, heightCalibration, heightCalibrationEnabled, paymentAmount, playlistId, logoUrl, flowDrawerEnabled, flowDrawerSlotCount, hideScreenId, hideAppMargin, smsEnabled, smsLimitPerScreen, resetSmsCount, whatsappEnabled, whatsappLimitPerScreen, resetWhatsAppCount } = req.body || {};
 
         console.log('[ADSCAPE] Update screen config request:', {
             screenId,
@@ -1283,6 +1288,9 @@ exports.updateScreenConfig = async (req, res, io) => {
 
         if (hideScreenId !== undefined) {
             updateData.hideScreenId = Boolean(hideScreenId);
+        }
+        if (hideAppMargin !== undefined) {
+            updateData.hideAppMargin = Boolean(hideAppMargin);
         }
         if (smsEnabled !== undefined) {
             updateData.smsEnabled = Boolean(smsEnabled);
@@ -1427,6 +1435,7 @@ exports.updateScreenConfig = async (req, res, io) => {
             const hasPaymentAmount = 'paymentAmount' in updateData;
             const hasFlowDrawerEnabled = 'flowDrawerEnabled' in updateData;
             const hasHideScreenId = 'hideScreenId' in updateData;
+            const hasHideAppMargin = 'hideAppMargin' in updateData;
             const hasSmsEnabled = 'smsEnabled' in updateData;
             const hasSmsLimitPerScreen = 'smsLimitPerScreen' in updateData;
             const hasWhatsAppEnabled = 'whatsappEnabled' in updateData;
@@ -1436,14 +1445,15 @@ exports.updateScreenConfig = async (req, res, io) => {
             const paymentAmountValue = updateData.paymentAmount;
             const flowDrawerEnabledValue = updateData.flowDrawerEnabled;
             const hideScreenIdValue = updateData.hideScreenId;
+            const hideAppMarginValue = updateData.hideAppMargin;
             const smsEnabledValue = updateData.smsEnabled;
             const smsLimitPerScreenValue = updateData.smsLimitPerScreen;
             const whatsappEnabledValue = updateData.whatsappEnabled;
             const whatsappLimitPerScreenValue = updateData.whatsappLimitPerScreen;
 
-            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId || hasSmsEnabled || hasSmsLimitPerScreen || hasWhatsAppEnabled || hasWhatsAppLimitPerScreen) {
-                // Remove heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, whatsappEnabled, whatsappLimitPerScreen from updateData for Prisma update
-                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, smsEnabled, smsLimitPerScreen, whatsappEnabled, whatsappLimitPerScreen, ...prismaUpdateData } = updateData;
+            if (hasHeightCalibration || hasHeightCalibrationEnabled || hasPaymentAmount || hasFlowDrawerEnabled || hasHideScreenId || hasHideAppMargin || hasSmsEnabled || hasSmsLimitPerScreen || hasWhatsAppEnabled || hasWhatsAppLimitPerScreen) {
+                // Remove raw-SQL-managed fields from updateData for Prisma update
+                const { heightCalibration, heightCalibrationEnabled, paymentAmount, flowDrawerEnabled, hideScreenId, hideAppMargin, smsEnabled, smsLimitPerScreen, whatsappEnabled, whatsappLimitPerScreen, ...prismaUpdateData } = updateData;
 
                 // Update other fields with Prisma if there are any
                 if (Object.keys(prismaUpdateData).length > 0) {
@@ -1600,6 +1610,31 @@ exports.updateScreenConfig = async (req, res, io) => {
                             await prisma.$executeRaw`
                                 UPDATE "AdscapePlayer"
                                 SET "hideScreenId" = ${hideScreenIdValue}
+                                WHERE "screenId" = ${String(screenId)}
+                            `;
+                        } else {
+                            throw e;
+                        }
+                    }
+                }
+
+                if (hasHideAppMargin) {
+                    try {
+                        await prisma.$executeRaw`
+                            UPDATE "AdscapePlayer"
+                            SET "hideAppMargin" = ${hideAppMarginValue}
+                            WHERE "screenId" = ${String(screenId)}
+                        `;
+                    } catch (e) {
+                        if (e.code === '42703' || e.message?.includes('does not exist')) {
+                            console.log('[ADSCAPE] hideAppMargin column does not exist, creating it...');
+                            await prisma.$executeRawUnsafe(`
+                                ALTER TABLE "AdscapePlayer" 
+                                ADD COLUMN IF NOT EXISTS "hideAppMargin" BOOLEAN DEFAULT false
+                            `);
+                            await prisma.$executeRaw`
+                                UPDATE "AdscapePlayer"
+                                SET "hideAppMargin" = ${hideAppMarginValue}
                                 WHERE "screenId" = ${String(screenId)}
                             `;
                         } else {

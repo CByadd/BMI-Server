@@ -32,6 +32,7 @@ model AdscapePlayer {
   flowDrawerEnabled        Boolean? @default(true)
   flowDrawerSlotCount      Int?     @default(2)
   hideScreenId             Boolean? @default(false)
+  hideAppMargin            Boolean? @default(false)
   smsEnabled               Boolean? @default(false)
   smsLimitPerScreen        Int?
   smsSentCount             Int?     @default(0)
