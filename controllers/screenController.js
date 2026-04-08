@@ -5,6 +5,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { ASSETS_DIR, ASSET_BASE_URL, TYPES, ensureAssetDirs, getTypeDir, safeFilename, assetUrl, ensureDir, managedMediaUrl } = require('../config/assets');
 
+let mediaTableCapabilities = null;
+
 function isOwnAssetUrl(url) {
     if (!url || typeof url !== 'string') return false;
     const base = (process.env.ASSET_BASE_URL || 'https://api.well2day.in/assets').replace(/\/$/, '');
@@ -67,10 +69,20 @@ async function ensureManagedMediaTable() {
                 duration FLOAT,
                 created_by UUID,
                 created_at TIMESTAMP DEFAULT NOW(),
-                tags TEXT,
-                folder_id UUID
+                tags TEXT
             )
         `);
+
+        const folderColumnRows = await prisma.$queryRawUnsafe(`
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'media' AND column_name = 'folder_id'
+            LIMIT 1
+        `);
+
+        mediaTableCapabilities = {
+            hasFolderId: Array.isArray(folderColumnRows) && folderColumnRows.length > 0
+        };
     } catch (e) {
         console.error('[ADSCAPE] Failed to ensure media table:', e.message);
         throw e;
@@ -119,22 +131,39 @@ async function saveScreenAssetManaged({ buffer, originalName, mimetype, size, sc
         throw new Error(`Managed asset write did not persist: ${managedLocation.absolutePath}`);
     }
 
-    await prisma.$executeRawUnsafe(
-        `INSERT INTO media (id, name, type, path, url, size, format, duration, created_by, tags, folder_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, $8, NULL)`,
-        mediaId,
-        originalName || managedLocation.filename,
-        'image',
-        managedLocation.relativePath,
-        managedLocation.url,
-        size || null,
-        mimetype ? String(mimetype).split('/')[1] : null,
-        JSON.stringify(
-            assetKind === 'logo'
-                ? [`screen:${screenId}`, 'logo']
-                : [`screen:${screenId}`, 'flow-drawer', `slot:${slotIndex + 1}`]
-        )
+    const tags = JSON.stringify(
+        assetKind === 'logo'
+            ? [`screen:${screenId}`, 'logo']
+            : [`screen:${screenId}`, 'flow-drawer', `slot:${slotIndex + 1}`]
     );
+
+    if (mediaTableCapabilities?.hasFolderId) {
+        await prisma.$executeRawUnsafe(
+            `INSERT INTO media (id, name, type, path, url, size, format, duration, created_by, tags, folder_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, $8, NULL)`,
+            mediaId,
+            originalName || managedLocation.filename,
+            'image',
+            managedLocation.relativePath,
+            managedLocation.url,
+            size || null,
+            mimetype ? String(mimetype).split('/')[1] : null,
+            tags
+        );
+    } else {
+        await prisma.$executeRawUnsafe(
+            `INSERT INTO media (id, name, type, path, url, size, format, duration, created_by, tags)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, $8)`,
+            mediaId,
+            originalName || managedLocation.filename,
+            'image',
+            managedLocation.relativePath,
+            managedLocation.url,
+            size || null,
+            mimetype ? String(mimetype).split('/')[1] : null,
+            tags
+        );
+    }
 
     console.log(`[ADSCAPE] Saved managed ${assetKind} asset to:`, managedLocation.absolutePath);
     return managedLocation.url;
